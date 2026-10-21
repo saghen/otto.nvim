@@ -102,8 +102,13 @@ end
 
 --- @param picker otto.Picker
 function M.select(picker)
+  local backend = require('otto.config').picker
+  if backend == 'vim_ui' then return fallback(picker) end
   local ok, minibuffer = pcall(require, 'minibuffer')
-  if not ok or not require('minibuffer.internal.state').initialized then return fallback(picker) end
+  if not ok or not require('minibuffer.internal.state').initialized then
+    assert(backend ~= 'minibuffer', 'otto: minibuffer is not set up')
+    return fallback(picker)
+  end
 
   local items, texts --- @type any[]?, table<any, string>
   local previewed --- @type any

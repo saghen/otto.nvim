@@ -12,17 +12,42 @@ local M = { name = 'pi', icon = '󰏿 ' }
 --- pi's tools, and those of extensions, which are otto's under another name
 local tools = { search = 'grep', kagi_search = 'web_search', web_fetch = 'fetch', kagi_extract = 'fetch' }
 
+local function environment(config, name)
+  local value = config.env[name] or vim.env[name]
+  return value ~= '' and value or nil
+end
+
+--- @param config? otto.ProviderConfig
 --- @return string folder of the current folder's sessions
-local function folder()
-  return ('%s/.pi/agent/sessions/--%s--'):format(vim.env.HOME, (vim.fn.getcwd():sub(2):gsub('[/\\:]', '-')))
+local function folder(config)
+  config = config or require('otto.config').providers.pi
+  local agent = environment(config, 'PI_CODING_AGENT_DIR') or '~/.pi/agent'
+  local root = environment(config, 'PI_CODING_AGENT_SESSION_DIR') or (agent .. '/sessions')
+  root = vim.fs.normalize(vim.fn.fnamemodify(vim.fs.normalize(root), ':p'))
+  return vim.fs.joinpath(root, '--' .. (vim.fn.getcwd():sub(2):gsub('[/\\:]', '-')) .. '--')
+end
+
+local function files(config)
+  local paths = {}
+  local dir = folder(config)
+  local scan = vim.uv.fs_scandir(dir)
+  if scan == nil then return paths end
+  while true do
+    local name = vim.uv.fs_scandir_next(scan)
+    if name == nil then break end
+    local path = vim.fs.joinpath(dir, name)
+    local stat = name:sub(-6) == '.jsonl' and vim.uv.fs_stat(path)
+    if stat and stat.type == 'file' then table.insert(paths, path) end
+  end
+  return paths
 end
 
 --- @param id string
 --- @return string? path of the session's file
-local function session_file(id)
-  -- files are named <time>_<id>.jsonl, and `*_fix.jsonl` would match the id auth_fix too
+local function session_file(id, config)
+  -- Read paths literally: roots and project names can contain glob characters.
   return vim
-    .iter(vim.fn.glob(('%s/*_%s.jsonl'):format(folder(), id), false, true))
+    .iter(files(config))
     :find(function(file) return vim.fs.basename(file):match('^[^_]*_(.+)%.jsonl$') == id end)
 end
 
@@ -205,7 +230,7 @@ end
 --- The history from the session file, along its current branch
 --- @async
 function Handle:replay()
-  local file = session_file(self.id)
+  local file = session_file(self.id, self.config)
   if file == nil then return end
   local entries = {}
   local by_id = {}
@@ -333,15 +358,25 @@ function Handle:close() self.proc:close() end
 --- @param on_status fun(status: otto.Status)
 --- @return otto.PiHandle
 local function start(id, args, config, on_log, on_status)
+  config = vim.deepcopy(config)
+  for _, key in ipairs({ 'PI_CODING_AGENT_DIR', 'PI_CODING_AGENT_SESSION_DIR' }) do
+    local path = environment(config, key)
+    if path then config.env[key] = vim.fs.normalize(vim.fn.fnamemodify(vim.fs.normalize(path), ':p')) end
+  end
   --- @type otto.PiHandle
   local handle = setmetatable({
     id = id,
+    config = config,
     log = log.new(on_log, on_status),
     state = { cost = 0 },
     on_status = on_status,
     working = false,
   }, Handle)
-  handle.proc = proc.start_provider(config, vim.list_extend({ '--mode', 'rpc' }, args), {
+  local launch_args = { '--mode', 'rpc' }
+  if environment(config, 'PI_CODING_AGENT_SESSION_DIR') then
+    vim.list_extend(launch_args, { '--session-dir', folder(config) })
+  end
+  handle.proc = proc.start_provider(config, vim.list_extend(launch_args, args), {
     name = 'pi',
     on_message = function(msg) handle:on_message(msg) end,
     on_exit = function()
@@ -438,10 +473,7 @@ end
 
 --- @return { file: string, read: fun(file: string, modified: integer): otto.SessionInfo? }[]
 function M.files()
-  return vim.tbl_map(
-    function(file) return { file = file, read = read } end,
-    vim.fn.glob(folder() .. '/*.jsonl', false, true)
-  )
+  return vim.tbl_map(function(file) return { file = file, read = read } end, files())
 end
 
 return M

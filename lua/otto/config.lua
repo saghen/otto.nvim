@@ -2,6 +2,7 @@
 -- buffer, like in after/ftplugin/otto.lua. Providers read theirs when they start
 
 --- @class (exact) otto.ConfigStrict
+--- @field picker 'auto' | 'vim_ui' | 'minibuffer'
 --- @field default_provider 'pi' | 'claude' | 'codex' Of `:Otto` and new sessions
 --- @field ask { provider: 'pi' } Answers one-shot prompts, like naming sessions
 --- @field cleanup_delay integer Milliseconds before an empty, hidden session's buffer is deleted
@@ -21,6 +22,7 @@
 --- @field permission_mode string
 
 --- @class (exact) otto.Config : otto.ConfigStrict, {}
+--- @field picker? 'auto' | 'vim_ui' | 'minibuffer'
 --- @field default_provider? 'pi' | 'claude' | 'codex'
 --- @field ask? { provider?: 'pi' }
 --- @field cleanup_delay? integer
@@ -128,6 +130,7 @@ local function schema()
   end
 
   return {
+    picker = { 'auto', types.enum({ 'auto', 'vim_ui', 'minibuffer' }) },
     default_provider = { 'pi', types.enum({ 'pi', 'claude', 'codex' }) },
     ask = { provider = { 'pi', types.enum({ 'pi' }) } },
     cleanup_delay = { 10000, 'number' },
