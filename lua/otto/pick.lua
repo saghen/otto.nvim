@@ -1,4 +1,4 @@
--- Fuzzy picker in the minibuffer, like `vim.ui.select` but with highlighted columns
+-- Session picker, with highlighted columns when using minibuffer
 
 --- @class otto.PickOpts
 --- @field prompt string
@@ -18,6 +18,9 @@ end
 --- @param opts otto.PickOpts
 --- @param on_choice fun(item?: any)
 local function pick(items, opts, on_choice)
+  if require('otto.config').options.picker == 'vim_ui' then
+    return vim.ui.select(items, { prompt = opts.prompt, format_item = opts.text }, on_choice)
+  end
   require('minibuffer').select({
     prompt = opts.prompt,
     max_height = 10,

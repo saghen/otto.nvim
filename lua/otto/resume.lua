@@ -105,20 +105,33 @@ end
 --- Newest first
 --- @return otto.SavedSession[]
 function M.list()
-  local folder = vim.fn.getcwd():sub(2):gsub('[/\\:]', '-')
   local sessions = {}
+  local function add(file, read)
+    local stat = vim.uv.fs_stat(file)
+    if stat == nil or stat.type ~= 'file' then return end
+    local modified = stat.mtime.sec
+    if cache[file] == nil or cache[file].modified ~= modified then
+      cache[file] = { modified = modified, session = read(file, modified) }
+    end
+    if cache[file].session ~= nil then table.insert(sessions, cache[file].session) end
+  end
+  -- Read Pi paths literally: configured roots and project names can contain glob characters.
+  local dir = require('otto.config').session_dir()
+  local scan = vim.uv.fs_scandir(dir)
+  if scan ~= nil then
+    while true do
+      local name = vim.uv.fs_scandir_next(scan)
+      if name == nil then break end
+      if name:sub(-6) == '.jsonl' then add(vim.fs.joinpath(dir, name), read_pi) end
+    end
+  end
   local globs = {
-    [('~/.pi/agent/sessions/--%s--/*.jsonl'):format(folder)] = read_pi,
     [vim.fs.dirname(require('otto.claude').session_file('')) .. '/*.jsonl'] = M.read_claude,
     ['~/.codex/sessions/**/rollout-*.jsonl'] = read_codex,
   }
   for glob, read in pairs(globs) do
     for _, file in ipairs(vim.fn.glob(glob, false, true)) do
-      local modified = vim.uv.fs_stat(file).mtime.sec
-      if cache[file] == nil or cache[file].modified ~= modified then
-        cache[file] = { modified = modified, session = read(file, modified) }
-      end
-      if cache[file].session ~= nil then table.insert(sessions, cache[file].session) end
+      add(file, read)
     end
   end
   -- Codex keeps the names apart from the sessions

@@ -30,6 +30,10 @@ local winbar = require('otto.winbar')
 
 local M = {}
 
+--- Configures pickers and Pi. Call before the first picker or agent launch.
+--- @param opts? table
+function M.setup(opts) require('otto.config').setup(opts) end
+
 local sessions = {} --- @type table<integer, otto.Session> by buffer
 local names = {} --- @type table<string, string> of new sessions by buffer name, until they start
 

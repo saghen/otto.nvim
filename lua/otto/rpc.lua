@@ -82,13 +82,20 @@ function M.start(name, args, on_event)
     end
   end
 
-  local cmd = vim.list_extend({ 'pi', '--mode', 'rpc' }, args)
+  local config = require('otto.config')
+  local cmd = vim.list_extend({ config.options.pi.command }, config.options.pi.args)
+  vim.list_extend(cmd, { '--mode', 'rpc' })
+  if config.session_override() then vim.list_extend(cmd, { '--session-dir', config.session_dir() }) end
+  vim.list_extend(cmd, args)
   local opts = { stdin = true, stdout = vim.schedule_wrap(on_stdout) }
+  if config.options.pi.agent_dir ~= nil then opts.env = { PI_CODING_AGENT_DIR = config.agent_dir() } end
   opts.stderr = function(_, data) client.stderr = data or client.stderr end
-  client.proc = vim.system(cmd, opts, function(out)
+  local ok, proc = pcall(vim.system, cmd, opts, function(out)
     if client.closed or out.code == 0 then return end
     vim.schedule(function() M.notify(name .. ' exited: ' .. (client.stderr or out.code)) end)
   end)
+  if not ok then error(('otto: could not start %s (%s): %s'):format(name, cmd[1], proc), 0) end
+  client.proc = proc
   return client
 end
 
