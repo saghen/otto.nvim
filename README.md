@@ -6,6 +6,8 @@
 
 **otto.nvim** is an agent interface for neovim, rendering natively in a prompt buffer (`:h prompt-buffer`), not a TUI! Currently, only Pi (specialized to my configuration), Codex and Claude Code are supported via RPC.
 
+Unlike my other projects, this project has been AI assisted, use at your own risk!
+
 ```lua
 vim.pack.add({
   "https://github.com/saghen/otto.nvim",
@@ -112,5 +114,3 @@ doesn't run any of them, and closed sessions run nothing. `OttoAgentStart` and `
 
 Callbacks run soon after the event, in order, rather than while the agent handles it, so they may prompt the agent or
 close the session. Set `nested = true` on autocmds that edit or delete buffers, so that their own autocmds run.
-
-Unlike my other projects, this project has been AI assisted, use at your own risk!
