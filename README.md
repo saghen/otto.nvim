@@ -75,4 +75,42 @@ vim.keymap.set('i', '<C-j>', '<Plug>(otto-submit)', { buffer = true })
 require('otto.config').set({ providers = { claude = { model = 'claude-sonnet-5-5' } } }, { bufnr = 0 })
 ```
 
+## Agent events
+
+Otto runs `User` autocmds for what an agent logs, its state and its requests, the same way for every agent:
+
+```lua
+vim.api.nvim_create_autocmd('User', {
+  pattern = 'OttoAgentSettled',
+  callback = function(args)
+    local turn = args.data.event
+    if turn and turn.worked and not turn.aborted then vim.notify(args.data.provider .. ' finished') end
+    -- the session may have no buffer, or a hidden one: use vim.fn.bufnr(args.data.uri), not args.buf
+  end,
+})
+```
+
+| User event | When it runs | Data |
+| --- | --- | --- |
+| `OttoPrompt` | The agent read a prompt | `event` with `text` |
+| `OttoText` | The agent answered | `event` with `text` |
+| `OttoToolCall` | A tool started, or one in the background finished, with `<id>:end` | `event` with `id`, `tool` and `args` |
+| `OttoToolResult` | A tool finished | `event` with the `id` of its call, `ok`, `output`, and `exit_code` of commands or `diff` of edits |
+| `OttoError` | The agent failed | `event` with `message` |
+| `OttoCompaction` | The context was compacted | `event` with `summary`, `before` and `after` when the agent reports them |
+| `OttoTurnEnd` | A turn ended, when the agent settles or a prompt follows its answer | `event` with `aborted`, `started` and `worked` |
+| `OttoState` | The state changed, like the status, queue, name, model or cost | `patch`, see `otto.StatePatch` |
+| `OttoAgentStart` | The agent started working, or compacting | |
+| `OttoAgentSettled` | The agent stopped working, or its session closed while it worked | `event` of the last `OttoTurnEnd`, if any |
+| `OttoRequest` | The agent waits for the user to answer, like a permission | `request` with `kind`, `prompt`, `items` and `default` |
+| `OttoSessionStart` | A new or resumed session replayed its history, also after a restart, before its other events | |
+| `OttoSessionClose` | The session closed, though not when Neovim exits | |
+
+Every callback receives `args.data = { uri, provider, id, ... }`, where `uri` is the session's buffer name, like
+`claude://<id>`, and `event` is a copy of the log event, see `otto.Event` in `lua/otto/event.lua`. The saved history
+doesn't run any of them, and closed sessions run nothing. `OttoAgentStart` and `OttoAgentSettled` always come in pairs.
+
+Callbacks run soon after the event, in order, rather than while the agent handles it, so they may prompt the agent or
+close the session. Set `nested = true` on autocmds that edit or delete buffers, so that their own autocmds run.
+
 Unlike my other projects, this project has been AI assisted, use at your own risk!

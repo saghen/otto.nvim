@@ -93,11 +93,11 @@ function Agent:on_message(msg)
   elseif msg.type == 'compaction_start' then
     self:set_status('compacting')
   elseif msg.type == 'compaction_end' then
-    -- compacting can happen while the agent works
-    self:set_status(self.working and 'working' or nil)
     if msg.result ~= nil then
       self.log:compaction({ summary = msg.result.summary, before = msg.result.tokensBefore })
     end
+    -- compacting can happen while the agent works
+    self:set_status(self.working and 'working' or nil)
   elseif msg.type == 'queue_update' then
     self.on_state({ queue = event.queue(msg.steering, msg.followUp) })
   elseif msg.type == 'session_info_changed' then
