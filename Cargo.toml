@@ -1,0 +1,24 @@
+[package]
+name = "otto-track"
+version = "0.1.0"
+edition = "2024"
+description = "Runs an agent over a FUSE passthrough of its workspace, recording every change it makes"
+license = "MIT"
+repository = "https://github.com/saghen/otto.nvim"
+keywords = ["fuse", "agent", "neovim"]
+categories = ["filesystem", "development-tools"]
+publish = false
+
+[dependencies]
+blake3 = "1.8"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+fuser = { version = "0.18.0", default-features = false }
+libc = "0.2"
+lexopt = "0.3"
+rustix = { version = "1.1", features = ["event", "fs", "mount", "net", "process", "stdio", "thread"] }
+
+[lints.clippy]
+# with clippy.toml allowing it in tests
+unwrap_used = "warn"
