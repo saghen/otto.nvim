@@ -12,7 +12,8 @@ local util = require('otto.util')
 --- @field format fun(item: any): otto.Chunks, otto.Chunks? The item, and its notes on the right
 --- @field text? fun(item: any): string What the query matches, the item as it's formatted by default
 --- @field preview? fun(item: any?) Of the item under the cursor, nil when there's none or the picker is cancelled
---- @field fuzzy? boolean Whether the query matches fuzzily, ranked, instead of by its words, of items that are strings
+--- @field fuzzy? boolean Whether the query matches fuzzily, best first, instead of by its words. With `text`, the
+--- items whose formatted lines have its words come after
 --- @field on_accept fun(item: any)
 
 local M = {}
@@ -64,6 +65,31 @@ local function filter(items, texts, query)
   end, items)
 end
 
+--- Keeps the items that match the query fuzzily, best first, then those whose lines have its words
+--- @param items any[]
+--- @param texts table<any, string>
+--- @param lines? table<any, string> Of the items as they're formatted, when that's more than their texts
+--- @param query string
+--- @return any[]
+local function fuzzy(items, texts, lines, query)
+  if query == '' then return items end
+  -- by index, since items come back from Vim as copies
+  local entries = {}
+  for index, item in ipairs(items) do
+    entries[index] = { text = texts[item], index = index }
+  end
+  local matched, seen = {}, {}
+  for _, entry in ipairs(vim.fn.matchfuzzy(entries, query, { key = 'text' })) do
+    local item = items[entry.index]
+    table.insert(matched, item)
+    seen[item] = true
+  end
+  for _, item in ipairs(lines and filter(items, lines, query) or {}) do
+    if not seen[item] then table.insert(matched, item) end
+  end
+  return matched
+end
+
 --- @param fn fun(...)
 local function safely(fn, ...)
   -- since minibuffer.nvim drops their errors
@@ -89,9 +115,10 @@ function M.select(picker)
   local has_state, state = pcall(require, 'minibuffer.internal.state')
   if not ok or not has_state or not state.initialized then return fallback(picker) end
 
-  local texts = {} --- @type table<any, string>
+  local texts, lines = {}, {} --- @type table<any, string>, table<any, string>
   for _, item in ipairs(picker.items) do
-    texts[item] = picker.text and picker.text(item) or util.join((picker.format(item)))
+    lines[item] = util.join((picker.format(item)))
+    texts[item] = picker.text and picker.text(item) or lines[item]
   end
   local previewed --- @type any
   local function preview(item)
@@ -106,7 +133,7 @@ function M.select(picker)
     fetch_fn = function(_, callback) callback(picker.items) end,
     filter_fn = function(ctx)
       if not picker.fuzzy then return filter(ctx.items, texts, ctx.input) end
-      return ctx.input == '' and ctx.items or vim.fn.matchfuzzy(ctx.items, ctx.input)
+      return fuzzy(ctx.items, texts, picker.text and lines, ctx.input)
     end,
     format_fn = function(item)
       local chunks, notes = picker.format(item)

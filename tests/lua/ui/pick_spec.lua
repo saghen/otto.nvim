@@ -47,6 +47,25 @@ t.describe('filter', function()
     'lua/otto/init.lua',
   })
   t.check('fuzzily without a query', #fuzzy.filter_fn({ items = { 'a', 'b' }, input = '' }), 2)
+
+  local commands = { 'rename', 'resume', 'effort', 'pi-review' }
+  local descriptions = {
+    rename = 'Rename the session',
+    resume = 'Switch to another session',
+    effort = 'Cycle thinking level',
+    ['pi-review'] = 'Review the changes',
+  }
+  local by_name = minibuffer(function()
+    pick.select(picker(commands, {
+      fuzzy = true,
+      text = function(item) return item end,
+      format = function(item) return { { item }, { '  ' .. descriptions[item] } } end,
+    }))
+  end)
+  local function names(input) return by_name.filter_fn({ items = commands, input = input }) end
+  t.check('fuzzily of the text', names('prv'), { 'pi-review' })
+  t.check('then the words of the lines', names('thinking'), { 'effort' })
+  t.check('without repeating them', names('review'), { 'pi-review' })
 end)
 
 t.describe('format', function()

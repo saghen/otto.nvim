@@ -1,5 +1,6 @@
 -- Otto's commands, which its keymaps and the palette (<M-x>) run. The agents' own commands, like pi's extensions,
--- prompt templates and skills, are prompts like "/review", which the palette starts in the input
+-- prompt templates and skills, are prompts like "/review", which the palette lists as "pi-review" and starts in the
+-- input
 
 local changes = require('otto.ui.changes')
 local history = require('otto.ui.history')
@@ -104,8 +105,8 @@ M.builtin = {
     end,
   },
   {
-    name = 'name',
-    description = 'Set the session display name',
+    name = 'rename',
+    description = 'Rename the session',
     run = function(view)
       local name = util.input({ prompt = 'Name: ', default = view.session.state.name })
       if name == nil or vim.trim(name) == '' then return end
@@ -403,9 +404,15 @@ function M.palette(view)
   end
 
   --- @param item otto.PaletteItem
+  --- @return string name With the provider before the agent's own, like "pi-review", which tells them from otto's
+  local function name(item)
+    return item.builtin and item.command.name or view.session.provider.name .. '-' .. item.command.name
+  end
+
+  --- @param item otto.PaletteItem
   local function format(item)
     local command = item.command
-    local chunks = { { item.builtin and command.name or '/' .. command.name, 'OttoToolName' } }
+    local chunks = { { name(item), 'OttoToolName' } }
     if command.arg_hint then table.insert(chunks, { ' ' .. command.arg_hint, 'OttoToolArg' }) end
     if command.description then table.insert(chunks, { '  ' .. command.description:gsub('\n.*', ''), 'Comment' }) end
     local key = item.builtin and keys[command.name]
@@ -414,13 +421,13 @@ function M.palette(view)
 
   --- @param item otto.PaletteItem
   local function run(item)
-    local name = item.command.name
-    if item.builtin then return M.run(view, name) end
+    if item.builtin then return M.run(view, item.command.name) end
     -- before what the input holds, which becomes its argument
-    insert(view, input.row(view.bufnr) + 1, 0, '/' .. name .. ' ')
+    insert(view, input.row(view.bufnr) + 1, 0, '/' .. item.command.name .. ' ')
   end
 
-  pick.select({ prompt = 'Command: ', items = items, format = format, on_accept = run })
+  -- by name, then by the words of the descriptions
+  pick.select({ prompt = 'Command: ', items = items, format = format, text = name, fuzzy = true, on_accept = run })
 end
 
 return M

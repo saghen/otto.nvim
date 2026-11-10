@@ -134,10 +134,10 @@ t.describe('commands', function()
   local commands = require('otto.ui.commands')
   local ui_input = vim.ui.input
   vim.ui.input = function(_, on_confirm) on_confirm('  New name  ') end
-  commands.run(view, 'name')
+  commands.run(view, 'rename')
   vim.wait(100, function() return agent.renamed ~= nil end)
   vim.ui.input = ui_input
-  t.check('names the session, trimmed', agent.renamed, 'New name')
+  t.check('renames the session, trimmed', agent.renamed, 'New name')
 
   agent.queue = { 'first', 'second' }
   input.set(bufnr, 'typed')
