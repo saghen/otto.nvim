@@ -38,6 +38,7 @@ local M = {}
 --- @field output? string
 --- @field exit_code? integer Of commands
 --- @field diff? otto.DiffLine[] Of edits
+--- @field background? boolean Of results of tools that go on, which end as a second result
 
 --- @class otto.CompactionEvent : otto.EventBase Optional, since Codex keeps the summary to itself
 --- @field type 'compaction'

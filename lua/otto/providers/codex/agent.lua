@@ -175,7 +175,10 @@ function Agent:on_message(msg)
     if self.abort_pending then self:abort() end
   elseif msg.method == 'item/started' and item.type == 'contextCompaction' then
     self.on_state({ status = 'compacting' })
-  elseif msg.method == 'item/started' and (item.type == 'commandExecution' or item.type == 'mcpToolCall') then
+  -- file changes too, whose patches apply before they complete, so that otto-track sees them while they run
+  elseif
+    msg.method == 'item/started' and vim.list_contains({ 'commandExecution', 'mcpToolCall', 'fileChange' }, item.type)
+  then
     for _, call in ipairs(decode.calls(item)) do
       self.announced[call.id] = true
       self.log:tool_call(call.id, call.tool, call.args, self.turn_started)

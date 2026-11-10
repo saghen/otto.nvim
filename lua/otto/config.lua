@@ -5,6 +5,10 @@
 --- @field default_provider otto.ProviderName Of `:Otto` and new sessions
 --- @field keymaps table<string, otto.Keymap> | false Of the session's buffer, false for none
 --- @field providers otto.ProvidersConfig
+--- @field track boolean Whether agents run under otto-track, which sees what their commands change too, see
+--- `track.lua`
+--- @field on_host string[] Commands that agents under otto-track run on the host, outside its user namespace, where
+--- others' files look owned by nobody and setuid does nothing. What they change isn't the agent's
 
 --- @alias otto.ProviderName 'pi' | 'claude' | 'codex' Like `uri.providers`
 
@@ -30,6 +34,8 @@
 --- @field default_provider? otto.ProviderName
 --- @field keymaps? table<string, otto.Keymap> | false
 --- @field providers? otto.ProvidersConfigPartial
+--- @field track? boolean
+--- @field on_host? string[]
 
 --- @class (exact) otto.ProviderConfigPartial : otto.ProviderConfig, {}
 --- @field cmd? string[]
@@ -66,6 +72,7 @@ local keymaps = {
   ['<C-p>'] = 'model',
   ['<S-Tab>'] = 'effort',
   ['<localleader>q'] = 'edits',
+  ['<localleader>c'] = 'changes',
   ['<localleader>p'] = 'prompts',
 }
 
@@ -142,6 +149,8 @@ local function schema()
       -- { '-c', 'approval_policy="on-request"' }
       codex = provider('codex'),
     },
+    track = { false, 'boolean' },
+    on_host = { { 'ssh', 'sudo', 'sudoedit', 'su', 'doas', 'pkexec', 'podman' }, types.list('string') },
   }
 end
 

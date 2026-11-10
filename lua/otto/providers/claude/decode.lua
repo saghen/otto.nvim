@@ -200,9 +200,13 @@ local function add_tool_results(log, decoder, entry, at)
         local async = details.isAsync or vim.startswith(result.output, 'Async agent')
         -- what's left is metadata, or the agent's answer when the turn waited for it
         result.output = async and '' or vim.trim((result.output:gsub('\n*agentId: .*$', '')))
+        result.background = async or nil
       end
       -- where its output goes, which its end has
-      if call.tool == 'bash' and call.args.background and result.ok then result.output = '' end
+      if call.tool == 'bash' and call.args.background and result.ok then
+        result.output = ''
+        result.background = true
+      end
       log:tool_result(result, at)
     end
   end

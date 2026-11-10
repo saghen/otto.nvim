@@ -41,6 +41,7 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<M-x>` | Commands |
 | `\p` | Jump to a prompt |
 | `\q` | Edits of the session to quickfix |
+| `\c` | What the tool under the cursor changed, or else the session, as a diff, when tracked |
 
 ## Configuration
 
@@ -70,6 +71,8 @@ require('otto').setup({
     -- args = { '-c', 'approval_policy="on-request"' }
     codex = { cmd = { 'codex' }, args = {}, env = {} },
   },
+  -- see what agents change through their commands too, see below
+  track = false,
 })
 ```
 
@@ -80,6 +83,26 @@ vim.keymap.set('i', '<C-j>', '<Plug>(otto-submit)', { buffer = true })
 -- or configure only this session, before its agent starts
 require('otto.config').set({ providers = { claude = { model = 'claude-sonnet-5-5' } } }, { bufnr = 0 })
 ```
+
+## Tracking changes
+
+With `track = true`, on Linux, agents run under `otto-track`, which puts a filesystem over the folder in the agent's
+own mount namespace and records each change to a file as it's made, by the agent's tools and by its commands, like
+formatters and `sed -i`. Several agents can run in the same folder. Build it first, and again after updating otto,
+which says when it's out of date:
+
+```sh
+cargo build --release
+```
+
+Then `\q` lists what commands changed too, and `\c` shows what a tool or the whole session changed as a diff, where
+`<CR>` opens the file at the line. Changes are kept in `stdpath('state')/otto/track`. What git ignores isn't
+recorded, and neither is `.git/`
+
+It needs unprivileged user namespaces, which Ubuntu restricts by default. In one, files of other users, like root's,
+look owned by nobody and setuid does nothing, so `on_host` lists commands that run outside it: `ssh`, `sudo`,
+`sudoedit`, `su`, `doas`, `pkexec` and `podman`. What they change isn't recorded as the agent's, and `sudo` still needs
+a cached password or `NOPASSWD`, since agents have no terminal
 
 ## Agent events
 

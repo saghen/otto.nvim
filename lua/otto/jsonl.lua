@@ -1,5 +1,5 @@
 -- JSONL: of agents' saved sessions, which otto reads a line at a time, of their processes' messages, and of the logs
--- that otto follows as they're appended to, like its history
+-- that otto follows as they're appended to, its history and otto-track's
 
 local M = {}
 

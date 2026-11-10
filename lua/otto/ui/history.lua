@@ -8,7 +8,7 @@ local pick = require('otto.ui.pick')
 local scroll = require('otto.ui.scroll')
 local util = require('otto.util')
 
---- As of now, rather than when this loaded
+--- As of now, like `track.store_dir`, rather than when this loaded
 --- @param name string
 --- @return string
 local function state_path(name) return vim.fs.joinpath(vim.fn.stdpath('state'), 'otto', name) end

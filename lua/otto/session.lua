@@ -3,6 +3,7 @@
 
 local config = require('otto.config')
 local providers = require('otto.providers')
+local track = require('otto.track')
 local uri = require('otto.uri')
 local util = require('otto.util')
 
@@ -34,6 +35,8 @@ local util = require('otto.util')
 --- @field state otto.State
 --- @field events otto.Event[] The log so far, as the agent said it
 --- @field running_calls otto.RunningCall[] Of the turn, without results yet, in order
+--- @field background_calls otto.RunningCall[] Whose results said they go on, until they end
+--- @field tracked? otto.TrackedAgent When otto-track runs the agent, see `track.lua`
 --- @field listeners otto.Listener[]
 --- @field request_lock vim.async.Semaphore Answered one at a time, since pickers can't show two at once
 --- @field live? boolean Whether the history was replayed, after which events run `User` autocmds
@@ -120,13 +123,31 @@ function Session:subscribe(listener)
   end
 end
 
+--- @return otto.RunningCall[] that run, those in the background first, oldest first
+function Session:calls() return vim.list_extend(vim.list_extend({}, self.background_calls), self.running_calls) end
+
 --- @param event otto.Event
 function Session:on_log(event)
+  -- what the call changed, which is recorded by the time the agent knows it's done
+  if self.tracked and (event.type == 'tool_result' or event.type == 'turn_end') then self.tracked:catch_up() end
   table.insert(self.events, event)
   if event.type == 'tool_call' then
     table.insert(self.running_calls, { id = event.id, tool = event.tool, args = event.args or {} })
+    -- the end of one in the background, which has an id of its own
+    for i, call in ipairs(self.background_calls) do
+      if call.tool == event.tool and vim.deep_equal(call.args, event.args or {}) then
+        table.remove(self.background_calls, i)
+        break
+      end
+    end
   elseif event.type == 'tool_result' then
-    self.running_calls = vim.tbl_filter(function(call) return call.id ~= event.id end, self.running_calls)
+    for i, call in ipairs(self.running_calls) do
+      if call.id == event.id then
+        table.remove(self.running_calls, i)
+        if event.background then table.insert(self.background_calls, call) end
+        break
+      end
+    end
   elseif event.type == 'turn_end' then
     self.running_calls = {}
     -- not of the history
@@ -167,6 +188,7 @@ local keys = { 'id', 'name', 'model', 'effort', 'context_window', 'context_token
 
 --- @param patch otto.StatePatch
 function Session:on_state(patch)
+  if self.tracked and patch.status == false then self.tracked:catch_up() end
   local state = self.state
   local was = state.status
   if patch.status ~= nil then
@@ -198,6 +220,7 @@ function Session:close()
   M.sessions[self] = nil
   self.listeners = {}
   self.agent:close()
+  if self.tracked then self.tracked:stop() end
 end
 
 --- @class otto.SessionOpts
@@ -221,12 +244,18 @@ function M.open(session_uri, opts)
     state = { id = id, queue = {}, commands = {} },
     events = {},
     running_calls = {},
+    background_calls = {},
     listeners = {},
     request_lock = vim.async.semaphore(1),
   }, Session)
   -- not the current buffer's, which blink.lib resolves without one
   local cfg = config.get({ bufnr = opts.bufnr or -1 })
   local provider_config = opts.config or cfg.providers[provider.name]
+  if cfg.track then session.tracked = track.start(provider.name, function() return session:calls() end) end
+  if session.tracked then
+    local cmd = session.tracked:wrap(provider_config.cmd, cfg.on_host)
+    provider_config = vim.tbl_extend('force', provider_config, { cmd = cmd })
+  end
   local opened, agent = pcall(provider.open, id, {
     name = opts.name,
     config = provider_config,
@@ -234,7 +263,10 @@ function M.open(session_uri, opts)
     on_state = function(patch) session:on_state(patch) end,
     on_request = function(request) session:on_request(request) end,
   })
-  if not opened then error(agent, 0) end
+  if not opened then
+    if session.tracked then session.tracked:stop() end
+    error(agent, 0)
+  end
   session.agent = agent
   M.sessions[session] = true
   util.run_task(function()

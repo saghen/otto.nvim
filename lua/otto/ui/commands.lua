@@ -173,8 +173,14 @@ M.builtin = {
   },
   {
     name = 'edits',
-    description = 'Edits of the session to quickfix',
+    description = 'Edits of the session to quickfix, with what else its tools changed while tracked',
     run = function(view) changes.to_quickfix(view.session) end,
+  },
+  {
+    name = 'changes',
+    description = 'What the tool under the cursor changed, or else the session, as a diff',
+    available = function(view) return view.session.tracked ~= nil end,
+    run = function(view) changes.open_at_cursor(view) end,
   },
   {
     name = 'abort',
