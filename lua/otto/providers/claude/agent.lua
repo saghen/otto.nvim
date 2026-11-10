@@ -247,12 +247,26 @@ function Agent:on_message(msg)
   elseif msg.type == 'result' then
     local usage = (msg.modelUsage or {})[self.model] or select(2, next(msg.modelUsage or {}))
     if usage then self.on_state({ context_window = usage.contextWindow }) end
+    self:report_context()
     self.log:end_turn(msg.subtype == 'error_during_execution')
     -- until Claude Code starts on the prompts that it didn't read, like follow-ups
     self:set_working(#self.unread > 0)
     -- which only the background ones outlive
     self.foreground = {}
   end
+end
+
+--- Asks Claude Code where it compacts, which depends on the model and settings, from its estimate without calling
+--- the API
+function Agent:report_context()
+  self:request({ subtype = 'get_context_usage', detail = 'summary' }, function(err, usage)
+    -- like older versions, which don't have it
+    if err ~= nil or usage == nil then return end
+    self.on_state({
+      context_tokens = usage.totalTokens,
+      compact_at = usage.isAutoCompactEnabled and usage.autoCompactThreshold or false,
+    })
+  end)
 end
 
 --- The history from the session file
@@ -343,6 +357,7 @@ function Agent:set_model(model)
   self:call({ subtype = 'set_model', model = model })
   self.model = model
   self.on_state({ model = model })
+  self:report_context()
 end
 
 --- @async
@@ -472,7 +487,10 @@ function M.open(id, opts)
     env = { CLAUDECODE = '' },
   })
   -- an error raises in what waits for it, like the commands that every session loads
-  agent:request({ subtype = 'initialize' }, function(err, response) agent.init:set(err, response) end)
+  agent:request({ subtype = 'initialize' }, function(err, response)
+    agent.init:set(err, response)
+    if err == nil then agent:report_context() end
+  end)
   opts.on_state({ model = opts.config.model, effort = opts.config.effort, context_window = default_context_window })
   return agent
 end

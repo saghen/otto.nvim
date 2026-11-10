@@ -145,3 +145,18 @@ t.describe('take_queue', function()
   t.run(function() texts = agent:take_queue(true) end)
   t.check('nothing that it read', texts, {})
 end)
+
+t.describe('where it compacts', function()
+  local usage = { totalTokens = 5000, autoCompactThreshold = 167000, isAutoCompactEnabled = true }
+  local agent, _, patches = t.open_agent('claude', 'compacts', function(msg)
+    if msg.request and msg.request.subtype == 'get_context_usage' then return nil, usage end
+    return nil, {}
+  end)
+  local function reported()
+    return vim.iter(patches):rev():find(function(patch) return patch.compact_at ~= nil end)
+  end
+  t.check('as Claude Code reports it', { reported().context_tokens, reported().compact_at }, { 5000, 167000 })
+  usage.isAutoCompactEnabled = false
+  agent:on_message({ type = 'result', subtype = 'success', modelUsage = {} })
+  t.check('not when it is off', reported().compact_at, false)
+end)

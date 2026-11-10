@@ -14,6 +14,7 @@ local util = require('otto.util')
 --- @field effort? string
 --- @field context_window? integer
 --- @field context_tokens? integer
+--- @field compact_at? integer Tokens at which the agent compacts the context
 --- @field cost? number Dollars
 --- @field status? otto.Status
 --- @field status_since? integer When the agent started working, in milliseconds of the event loop
@@ -196,6 +197,7 @@ function Session:on_state(patch)
     state.status = patch.status or nil
   end
   if patch.remote ~= nil then state.remote = patch.remote or nil end
+  if patch.compact_at ~= nil then state.compact_at = patch.compact_at or nil end
   local now = state.status
   for _, key in ipairs(keys) do
     if patch[key] ~= nil then state[key] = patch[key] end

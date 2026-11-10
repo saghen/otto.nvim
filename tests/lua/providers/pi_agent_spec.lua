@@ -54,3 +54,32 @@ t.describe('responses', function()
   agent:on_message({ type = 'response', id = '5', success = false })
   t.check('an error without a message fails all the same', resolved, { '5', 'request failed' })
 end)
+
+t.describe('where it compacts', function()
+  local dir = vim.fn.tempname()
+  vim.fn.mkdir(dir, 'p')
+  local settings =
+    { compaction = { reserveTokens = 20000, modelOverrides = { ['p/small'] = { reserveTokens = 1000 } } } }
+  vim.fn.writefile({ vim.json.encode(settings) }, dir .. '/settings.json')
+  local agent_dir = vim.env.PI_CODING_AGENT_DIR
+  vim.env.PI_CODING_AGENT_DIR = dir
+  local function open(enabled)
+    local _, _, patches = t.open_agent('pi', 'compacts', function(msg)
+      if msg.type ~= 'get_state' then return nil, {} end
+      return nil, { model = { provider = 'p', id = 'big', contextWindow = 200000 }, autoCompactionEnabled = enabled }
+    end)
+    vim.wait(100, function() return #patches > 0 end)
+    return patches[#patches], patches
+  end
+  t.check('the window less the reserved tokens', open(true).compact_at, 180000)
+  local _, patches = open(true)
+  local agent = t.open_agent('pi', 'compacts', function(msg)
+    if msg.type == 'set_model' then return nil, { contextWindow = 10000 } end
+    return nil, { model = { provider = 'p', id = 'big', contextWindow = 200000 } }
+  end)
+  agent.on_state = function(patch) table.insert(patches, patch) end
+  t.run(function() agent:set_model('p/small') end)
+  t.check('of the model', patches[#patches].compact_at, 9000)
+  t.check('not when it is off', open(false).compact_at, false)
+  vim.env.PI_CODING_AGENT_DIR = agent_dir
+end)

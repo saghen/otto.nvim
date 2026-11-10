@@ -20,8 +20,40 @@ local M = {}
 --- @field on_state fun(patch: otto.StatePatch)
 --- @field on_request fun(request: otto.Request)
 --- @field working boolean
+--- @field auto_compact boolean Whether pi compacts the context when it nears the window
 local Agent = {}
 Agent.__index = Agent
+
+--- @param path string
+--- @return table
+local function read_settings(path)
+  local ok, settings = pcall(function() return jsonl.decode(table.concat(vim.fn.readfile(path), '\n')) end)
+  return ok and type(settings) == 'table' and settings or {}
+end
+
+--- Tokens that pi keeps free below the window, which it doesn't report, from its settings like it reads them
+--- @param model string like "openrouter/deepseek/deepseek-v4.1-flash"
+--- @return integer
+local function reserve_tokens(model)
+  local dir = vim.fs.normalize(vim.env.PI_CODING_AGENT_DIR or '~/.pi/agent')
+  local settings = vim.tbl_deep_extend(
+    'force',
+    read_settings(dir .. '/settings.json'),
+    read_settings(vim.fn.getcwd() .. '/.pi/settings.json')
+  )
+  local compaction = type(settings.compaction) == 'table' and settings.compaction or {}
+  local override = type(compaction.modelOverrides) == 'table' and compaction.modelOverrides[model] or {}
+  return override.reserveTokens or compaction.reserveTokens or 16384
+end
+
+--- @param model? string
+--- @param window? integer
+--- @return integer | false | nil compact_at Where pi compacts, past the window less the reserved tokens
+function Agent:compact_at(model, window)
+  if not self.auto_compact then return false end
+  if model == nil or window == nil then return nil end
+  return window - reserve_tokens(model)
+end
 
 Agent.compact_instructions = true
 
@@ -189,7 +221,11 @@ end
 function Agent:set_model(model)
   local provider, id = model:match('^([^/]+)/(.+)$')
   local result = self:call({ type = 'set_model', provider = provider, modelId = id })
-  self.on_state({ model = model, context_window = result.contextWindow })
+  self.on_state({
+    model = model,
+    context_window = result.contextWindow,
+    compact_at = self:compact_at(model, result.contextWindow),
+  })
 end
 
 --- @async
@@ -256,11 +292,14 @@ function M.open(id, opts)
   util.run_task(function()
     local state = agent:call({ type = 'get_state' })
     local model = state.model or {}
+    local model_id = model.id and decode.model_id(model.provider, model.id)
+    agent.auto_compact = state.autoCompactionEnabled ~= false
     opts.on_state({
       name = state.sessionName,
-      model = model.id and decode.model_id(model.provider, model.id),
+      model = model_id,
       effort = model.reasoning and state.thinkingLevel or nil,
       context_window = model.contextWindow,
+      compact_at = agent:compact_at(model_id, model.contextWindow),
     })
   end)
   return agent

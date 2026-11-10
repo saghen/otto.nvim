@@ -91,6 +91,7 @@ local M = {}
 --- @field effort? string
 --- @field context_window? integer
 --- @field context_tokens? integer Tokens in the context, as of the last answer or compaction
+--- @field compact_at? integer | false Tokens in the context at which the agent compacts it, false when it doesn't
 --- @field cost? number Dollars, for the whole session
 --- @field status? otto.Status | false False once the agent stopped
 --- @field queue? otto.Queued[] Prompts that the agent hasn't read yet, including the one that was just sent

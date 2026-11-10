@@ -29,6 +29,7 @@ local M = {}
 --- @field follow_ups string[] Prompts that wait for the turn to complete
 --- @field new_thread? boolean Whether the thread started with the agent, without history
 --- @field decoder otto.CodexDecoder
+--- @field compact_limit? integer Of the config, `model_auto_compact_token_limit`
 local Agent = {}
 Agent.__index = Agent
 
@@ -191,9 +192,11 @@ function Agent:on_message(msg)
   elseif msg.method == 'error' and not params.willRetry then
     self.log:error(params.error.message, self.turn_started)
   elseif msg.method == 'thread/tokenUsage/updated' then
+    local window = params.tokenUsage.modelContextWindow
     self.on_state({
       context_tokens = params.tokenUsage.last.totalTokens,
-      context_window = params.tokenUsage.modelContextWindow,
+      context_window = window,
+      compact_at = window and self:compact_at(window),
     })
   elseif msg.method == 'thread/name/updated' then
     self.on_state({ name = params.threadName })
@@ -342,6 +345,15 @@ function Agent:rename(name) self:call('thread/name/set', { name = name }) end
 --- @return otto.AgentCommand[]
 function Agent:commands() return {} end
 
+--- Where Codex compacts, which it doesn't report: at 90% of the model's window, of which it reports 95%, or the
+--- config's limit when that's lower
+--- @param window integer
+--- @return integer
+function Agent:compact_at(window)
+  local limit = math.floor(math.floor(window * 100 / 95 + 0.5) * 9 / 10)
+  return self.compact_limit and math.min(self.compact_limit, limit) or limit
+end
+
 function Agent:close() self.rpc:close() end
 
 --- Releases what waits for the thread
@@ -402,6 +414,11 @@ function M.open(id, opts)
       return agent:on_thread_started(err)
     end
     agent.rpc:send({ method = 'initialized' })
+    agent:request('config/read', {}, function(read_err, data)
+      if read_err == nil then
+        agent.compact_limit = vim.tbl_get(data or {}, 'config', 'model_auto_compact_token_limit')
+      end
+    end)
     -- an error raises in what waits for the models, like the model picker
     agent:request('model/list', {}, function(list_err, data) agent.models_ready:set(list_err, data and data.data) end)
     -- the id of a thread, which Codex creates, rather than the name of a new session

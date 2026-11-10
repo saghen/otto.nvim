@@ -190,3 +190,20 @@ t.describe('take_queue', function()
   t.check('only follow-ups', texts, { 'later' })
   t.check("which don't interrupt", count(follow_ups_sent, 'turn/interrupt'), 0)
 end)
+
+t.describe('where it compacts', function()
+  local function usage(agent)
+    local tokens = { last = { totalTokens = 1000 }, modelContextWindow = 258400 }
+    agent:on_message({ method = 'thread/tokenUsage/updated', params = { tokenUsage = tokens } })
+  end
+  local agent, _, patches = t.open_agent('codex', thread, resume)
+  usage(agent)
+  t.check('at 90% of the whole window', patches[#patches].compact_at, 244800)
+
+  local limited, _, limited_patches = t.open_agent('codex', thread, function(msg)
+    if msg.method == 'config/read' then return nil, { config = { model_auto_compact_token_limit = 200000 } } end
+    return resume(msg)
+  end)
+  usage(limited)
+  t.check('or the lower limit of the config', limited_patches[#limited_patches].compact_at, 200000)
+end)

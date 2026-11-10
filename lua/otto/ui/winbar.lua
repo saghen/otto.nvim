@@ -1,5 +1,5 @@
 -- The winbar of a session: the agent's icon, the session's name, model, thinking level, context usage, cost and
--- whether Remote Control is on
+-- whether Remote Control is on. Context usage is of where the agent compacts, or of its window when it doesn't
 
 local M = {}
 
@@ -14,7 +14,8 @@ local separator = item(' | ', 'OttoWinbarSeparator')
 --- @return string like "󰏿 investigate | model: deepseek/deepseek-v4.1-flash | effort: high"
 function M.render(view)
   local state = view.session.state
-  local context = state.context_tokens and state.context_window and state.context_tokens / state.context_window * 100
+  local limit = state.compact_at or state.context_window
+  local context = state.context_tokens and limit and state.context_tokens / limit * 100
   local fields = {
     { 'model', state.model },
     { 'effort', state.effort },

@@ -54,6 +54,11 @@ t.describe('winbar', function()
     winbar.render(view({ id = 'x', context_tokens = 50, context_window = 200, cost = 1.234 })),
     'context: %%#Normal#25%%%%.*cost: %%#Normal#%$1%.23$'
   )
+  t.match(
+    'context of where the agent compacts',
+    winbar.render(view({ id = 'x', context_tokens = 50, context_window = 400, compact_at = 100 })),
+    'context: %%#Normal#50%%%%$'
+  )
   t.match('no cost under a cent', winbar.render(view({ id = 'x', cost = 0.004 })), '^[^$]*$')
   t.match('escapes %', winbar.render(view({ id = '100%' })), '100%%%%$')
 end)

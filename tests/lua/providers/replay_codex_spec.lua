@@ -123,7 +123,7 @@ for i, turn in ipairs(turns) do
   notify('turn/completed', { threadId = thread, turn = vim.tbl_extend('force', turn, { items = {} }) })
   t.check('turn ' .. i .. ' read its prompts', live.unread, {})
 end
-t.check('methods', vim.tbl_map(function(msg) return msg.method end, vim.list_slice(sent, 5)), {
+t.check('methods', vim.tbl_map(function(msg) return msg.method end, vim.list_slice(sent, 6)), {
   'turn/start',
   'turn/steer',
   'turn/start',
