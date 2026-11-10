@@ -30,6 +30,9 @@ What's lost: plugins that ask for the buffer's tree (`vim.treesitter.get_node`, 
 
 ## Steps
 
+These measure what was then. The transcript has since stopped removing old turns, so it keeps all its lines, see
+ARCHITECTURE.md
+
 1. **Highlight each block once, with extmarks** - done
    - `highlight.lua` highlights lines as a language, and the prompt
    - the transcript highlights its blocks, without fences, and the buffer has no treesitter
