@@ -19,5 +19,6 @@ end
 
 M.open = agent.open
 M.files = files.list
+M.parse = files.parse
 
 return M

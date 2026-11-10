@@ -8,12 +8,13 @@ local util = require('otto.util')
 local M = {}
 
 local group_indent = '  ' -- of the tools in a group
-local slow_command = 15 -- seconds that commands run for before their headers keep how long they ran
 local body_indent = '  ' -- of the lines below the header of a tool
 M.body_indent = body_indent
 
+--- @alias otto.BlockKind 'user' | 'text' | 'tool' | 'error' | 'note'
+
 --- @class otto.Block
---- @field kind 'user' | 'text' | 'tool' | 'error' | 'note'
+--- @field kind otto.BlockKind
 --- @field spaced boolean Whether an empty line comes before it
 --- @field lines string[] The first is the header of tools
 --- @field indent? string Before the header and the sections
@@ -27,10 +28,8 @@ M.body_indent = body_indent
 --- @field group? { summary: otto.Chunks, first: boolean } Of the tool, which starts with its first tool
 --- @field call? otto.BlockCall Of tools, for the actions on them
 
---- @class otto.BlockCall
+--- @class otto.BlockCall : otto.ToolCall
 --- @field id? string Of the call
---- @field tool string
---- @field args table
 --- @field output? string Whole, which the lines may only show the start of
 
 --- @class otto.BlockHighlight
@@ -51,25 +50,39 @@ M.body_indent = body_indent
 --- @field type 'block' | 'turn_end' Folds the groups of the turn, which stay open while it runs
 --- @field block? otto.Block
 
+--- @class otto.LayoutCall : otto.ToolCall
+--- @field at? integer When it was called
+
 --- @class otto.Layout
---- @field last_kind? 'user' | 'text' | 'tool' | 'error' | 'note' Kind of the last block, which spaces the next one
+--- @field last_kind? otto.BlockKind Kind of the last block, which spaces the next one
 --- @field group? { tools: string[], failed: integer } Tools since the last block of another kind
---- @field calls table<string, { tool: string, args: table, at?: integer }> Tool calls by id, until their result arrives
+--- @field calls table<string, otto.LayoutCall> Tool calls by id, until their result arrives
 local Layout = {}
 Layout.__index = Layout
 
 --- @return otto.Layout
 function M.new() return setmetatable({ calls = {} }, Layout) end
 
---- @param block otto.Block
+--- Whether a block of `kind` would have an empty line above it, unlike tools right below the text that explains them,
+--- and below each other
+--- @param kind otto.BlockKind
+--- @return boolean
+function Layout:spaced(kind) return not (kind == 'tool' and (self.last_kind == 'tool' or self.last_kind == 'text')) end
+
+--- @class otto.NewBlock : otto.Block Of `Layout:block`, which spaces it, without highlights or targets by default
+--- @field spaced? boolean
+--- @field highlights? otto.BlockHighlight[]
+--- @field targets? otto.BlockTarget[]
+
+--- @param block otto.NewBlock
 --- @return otto.Op[]
 function Layout:block(block)
-  -- tools go right below the text that explains them, and below each other
-  block.spaced = not (block.kind == 'tool' and (self.last_kind == 'tool' or self.last_kind == 'text'))
+  block.spaced = self:spaced(block.kind)
   block.highlights = block.highlights or {}
   block.targets = block.targets or {}
   if block.group == nil then self.group = nil end
   self.last_kind = block.kind
+  --- @cast block otto.Block
   return { { type = 'block', block = block } }
 end
 
@@ -81,7 +94,7 @@ end
 --- @param targets otto.BlockTarget[]
 --- @return string[]
 local function tool_lines(header, sections, indent, highlights, targets)
-  local lines = { indent .. tools.join(header) }
+  local lines = { indent .. util.join(header) }
   local col = #indent + #body_indent
   for _, section in ipairs(sections) do
     local before = #lines - 1 -- index of the line before the section
@@ -111,26 +124,47 @@ local function tool_lines(header, sections, indent, highlights, targets)
   return lines
 end
 
+--- @class otto.ToolBlockFields Of a tool's block, besides its lines
+--- @field call? otto.BlockCall
+--- @field diff? { filetype?: string }
+--- @field highlights? otto.BlockHighlight[] Besides those of the sections
+--- @field targets? otto.BlockTarget[] Besides those of the sections
+
+--- A tool's block, with the lines of its header and sections
+--- @param header otto.Chunks
+--- @param sections otto.Section[]
+--- @param indent string
+--- @param fields? otto.ToolBlockFields
+--- @return otto.NewBlock
+local function new_tool_block(header, sections, indent, fields)
+  fields = fields or {}
+  local highlights, targets = {}, {}
+  local lines = tool_lines(header, sections, indent, highlights, targets)
+  return {
+    kind = 'tool',
+    lines = lines,
+    indent = indent,
+    header = header,
+    sections = sections,
+    highlights = vim.list_extend(highlights, fields.highlights or {}),
+    targets = vim.list_extend(targets, fields.targets or {}),
+    call = fields.call,
+    diff = fields.diff,
+  }
+end
+
 --- A tool on its own, which folds below its header
 --- @param kind 'tool' | 'note'
 --- @param header otto.Chunks
 --- @param sections otto.Section[]
---- @param targets? otto.BlockTarget[]
+--- @param fields? otto.ToolBlockFields
 --- @return otto.Op[]
-function Layout:tool_block(kind, header, sections, targets)
-  local highlights = {}
-  targets = targets or {}
-  return self:block({
-    kind = kind,
-    lines = tool_lines(header, sections, '', highlights, targets),
-    indent = '',
-    header = header,
-    sections = sections,
-    highlights = highlights,
-    targets = targets,
-    -- in insert mode, a single line inserted right below a fold joins it, so blocks are never a single line there
-    fold = true,
-  })
+function Layout:tool_block(kind, header, sections, fields)
+  local block = new_tool_block(header, sections, '', fields)
+  block.kind = kind
+  -- in insert mode, a single line inserted right below a fold joins it, so blocks are never a single line there
+  block.fold = true
+  return self:block(block)
 end
 
 --- @param tokens integer
@@ -141,41 +175,16 @@ local function thousands(tokens) return math.floor(tokens / 1000) .. 'k' end
 --- @return string[]
 local function split(text) return vim.split(text, '\n') end
 
---- @param call { tool: string, args: table }
---- @param diff otto.DiffLine[]
---- @return otto.Chunks
-local function diff_header(call, diff)
-  local header = tools.header(call.tool, call.args)
-  local added, removed = tools.diff_counts(diff)
-  return vim.list_extend(header, { { ('  +%d'):format(added), 'Added' }, { (' -%d'):format(removed), 'Removed' } })
-end
-
---- Files that the agent edited, at the first changed line, for the quickfix list
---- @param events otto.Event[] The log
---- @return vim.quickfix.entry[]
-function M.quickfix_edits(events)
-  local calls, edits = {}, {}
-  for _, event in ipairs(events) do
-    if event.type == 'tool_call' then calls[event.id] = tools.display_call(event.tool, event.args) end
-    local call = event.type == 'tool_result' and event.diff ~= nil and calls[event.id]
-    -- which results without a call don't have
-    if call and call.args.path ~= nil then
-      local _, first_changed = tools.format_diff(event.diff)
-      local text = tools.join(diff_header(call, event.diff))
-      table.insert(edits, { filename = call.args.path, lnum = first_changed or 1, text = text })
-    end
-  end
-  return edits
-end
-
 --- Edits show their diff since that's what matters, with the changed lines highlighted, and the code as its language
---- @param call { tool: string, args: table }
+--- @param id string Of the call
+--- @param call otto.ToolCall
 --- @param diff otto.DiffLine[]
 --- @return otto.Op[]
-function Layout:diff(call, diff)
-  local header = diff_header(call, diff)
+function Layout:diff(id, call, diff)
+  local header = tools.diff_header(call, diff)
   local lines, first_changed = tools.format_diff(diff)
-  local path = call.args.path
+  -- a string, which `display_call` checked
+  local path = call.args.path --[[@as string?]]
 
   local targets = path
       and {
@@ -183,99 +192,71 @@ function Layout:diff(call, diff)
         { index = 1, count = #lines, path = path, parse = 'diff' },
       }
     or {}
-  local ops = self:tool_block('tool', header, { { lines = lines } }, targets)
-  local block = ops[1].block --[[@as otto.Block]]
-  block.diff = { filetype = path and vim.filetype.match({ filename = path }) }
-  block.call = { tool = call.tool, args = call.args }
+  local highlights = {}
   for i, line in ipairs(diff) do
     local hl_group = line.sign == '+' and 'DiffAdd' or line.sign == '-' and 'DiffDelete' or nil
-    if hl_group ~= nil then table.insert(block.highlights, { index = i, hl_group = hl_group }) end
+    if hl_group ~= nil then table.insert(highlights, { index = i, hl_group = hl_group }) end
   end
-  return ops
+  return self:tool_block('tool', header, { { lines = lines } }, {
+    targets = targets,
+    highlights = highlights,
+    diff = { filetype = path and vim.filetype.match({ filename = path }) },
+    call = { id = id, tool = call.tool, args = call.args },
+  })
 end
 
 --- Adds the tool to the group of tools since the last block of another kind, or starts one
---- @param tool string
+--- @param name string Of the tool
 --- @param failed boolean
 --- @param header otto.Chunks
 --- @param sections otto.Section[]
 --- @param count integer Of what the summary counts, like the pages that one tool read
+--- @param fields? otto.ToolBlockFields
 --- @return otto.Op[]
-function Layout:grouped(tool, failed, header, sections, count)
+function Layout:add_to_group(name, failed, header, sections, count, fields)
   local group = self.group or { tools = {}, failed = 0 }
   for _ = 1, count do
-    table.insert(group.tools, tool)
+    table.insert(group.tools, name)
   end
   if failed then group.failed = group.failed + 1 end
 
-  local highlights, targets = {}, {}
-  local lines = tool_lines(header, sections, group_indent, highlights, targets)
-  local ops = self:block({
-    kind = 'tool',
-    lines = lines,
-    indent = group_indent,
-    header = header,
-    sections = sections,
-    highlights = highlights,
-    targets = targets,
-    fold = #lines > 1,
-    group = { summary = tools.summary(group.tools, group.failed), first = self.group == nil },
-  })
+  local block = new_tool_block(header, sections, group_indent, fields)
+  block.fold = #block.lines > 1
+  block.group = { summary = tools.summary(group.tools, group.failed), first = self.group == nil }
+  local ops = self:block(block)
   self.group = group
   return ops
 end
 
---- @param result otto.Event tool_result
+--- @param result otto.ToolResultEvent
 --- @return otto.Op[]
 function Layout:tool_result(result)
   local call = self.calls[result.id] or { tool = '?', args = {} }
   self.calls[result.id] = nil
   local tool = call.tool
   local args = call.args
-  if result.diff ~= nil then return self:diff(call, result.diff) end
+  if result.diff ~= nil then return self:diff(result.id, call, result.diff) end
 
-  local header = tools.header(tool, args)
   if tool == 'write' and result.ok then
-    -- without the line that the last newline would start
-    local lines = args.content == '' and {} or split((args.content:gsub('\n$', '')))
-    table.insert(header, { ('  +%d'):format(#lines), 'Added' })
-    -- all of them, since the block folds
-    local section =
-      { lines = lines, filetype = vim.filetype.match({ filename = args.path }), path = args.path, lnum = 1 }
-    local ops = self:tool_block('tool', header, { section }, { { index = 0, path = args.path } })
-    ops[1].block.call = { tool = tool, args = args }
-    return ops
+    local section, header = tools.written(args)
+    return self:tool_block('tool', header, { section }, {
+      targets = { { index = 0, path = section.path } },
+      call = { id = result.id, tool = tool, args = args },
+    })
   end
 
   local section = tools.output_section(tool, args, result.output or '')
-  local lines = section.lines
   local seconds = call.at and math.floor((result.at - call.at) / 1000)
-  if tool == 'bash' and seconds and seconds >= slow_command then
-    table.insert(header, { '  ' .. util.format_duration(seconds), 'OttoStatusTime' })
-  end
-  local code = result.exit_code
-  -- tools only say how they ended when they fail
-  if tool == 'bash' and (code or 0) ~= 0 then
-    table.insert(header, { '  exit ' .. code, 'OttoToolFailed' })
-  elseif not result.ok then
-    vim.list_extend(header, { { '  failed', 'OttoToolFailed' }, { ' ' .. (lines[1] or ''), 'OttoToolDetail' } })
-  end
+  local header = tools.result_header(call, result, seconds, section.lines[1])
+  local sections = tools.result_sections(call, section)
   local count = tool == 'fetch' and #args.urls or 1
-  local sections = #lines > 0 and { section } or {}
-  -- the header only shows the description or first line of commands
-  local command = tool == 'bash' and split(vim.trim(args.command))
-  if command and (#command > 1 or args.description ~= nil) then
-    table.insert(sections, 1, tools.section(command, 'bash'))
-  end
-  local ops = self:grouped(tool, not result.ok, header, sections, count)
-  ops[1].block.call = { id = result.id, tool = tool, args = args, output = result.output }
-  if section.path ~= nil then
-    table.insert(ops[1].block.targets, { index = 0, path = section.path, lnum = section.lnum })
-  end
-  return ops
+  return self:add_to_group(tool, not result.ok, header, sections, count, {
+    call = { id = result.id, tool = tool, args = args, output = result.output },
+    targets = section.path and { { index = 0, path = section.path, lnum = section.lnum } },
+  })
 end
 
---- @param compaction otto.Event
+--- @param compaction otto.CompactionEvent
 --- @return otto.Op[]
 function Layout:compaction(compaction)
   local before, after = compaction.before, compaction.after
@@ -283,13 +264,13 @@ function Layout:compaction(compaction)
     or before and ('  from %s tokens'):format(thousands(before))
   local header = { { 'compacted', 'OttoToolName' }, tokens and { tokens, 'OttoToolDetail' } or nil }
   if compaction.summary == nil then
-    return self:block({ kind = 'note', lines = { tools.join(header) }, indent = '', header = header })
+    return self:block({ kind = 'note', lines = { util.join(header) }, indent = '', header = header })
   end
   return self:tool_block('note', header, { { lines = split(compaction.summary), filetype = 'markdown' } })
 end
 
 --- Notes how long the agent worked, like "Worked for 2m 10s · done 4:19 p.m"
---- @param turn_end otto.Event
+--- @param turn_end otto.TurnEndEvent
 --- @return otto.Op[]
 function Layout:turn_end(turn_end)
   -- live and replayed times can differ by milliseconds
@@ -306,7 +287,9 @@ function Layout:turn_end(turn_end)
   return self:block({ kind = 'note', lines = { text }, indent = '', header = header })
 end
 
---- @param event otto.Event
+-- otto.Event spelled out, since emmylua only narrows unions by their `type` then
+-- luacheck: push no max line length
+--- @param event otto.UserEvent | otto.TextEvent | otto.ErrorEvent | otto.ToolCallEvent | otto.ToolResultEvent | otto.CompactionEvent | otto.TurnEndEvent
 --- @return otto.Op[] what changes in the transcript
 function Layout:add(event)
   if event.type == 'user' then
@@ -317,8 +300,7 @@ function Layout:add(event)
     return self:block({ kind = 'error', lines = split(event.message) })
   elseif event.type == 'tool_call' then
     local call = tools.display_call(event.tool, event.args)
-    call.at = event.at
-    self.calls[event.id] = call
+    self.calls[event.id] = { tool = call.tool, args = call.args, at = event.at }
   elseif event.type == 'tool_result' then
     return self:tool_result(event)
   elseif event.type == 'compaction' then
@@ -332,5 +314,6 @@ function Layout:add(event)
   end
   return {}
 end
+-- luacheck: pop
 
 return M

@@ -1,6 +1,8 @@
 -- The end of the transcript: the tools that are running and what the agent is doing, for how long, and the prompts that
 -- it hasn't read yet, above the separator above the input
 
+local highlight = require('otto.render.highlight')
+local input = require('otto.input')
 local scroll = require('otto.ui.scroll')
 local tools = require('otto.render.tools')
 local util = require('otto.util')
@@ -32,7 +34,7 @@ end
 function Footer:draw()
   local bufnr = self.bufnr
   local state = self.session.state
-  local row = util.input_row(bufnr)
+  local row = input.row(bufnr)
   vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
 
   local lines = {}
@@ -42,8 +44,11 @@ function Footer:draw()
     local line = { { '  ' } } -- nested in a group
     local call = tools.display_call(running.tool, running.args)
     for _, chunk in ipairs(tools.header(call.tool, call.args)) do
-      -- without their filetype, which virtual text doesn't take
-      table.insert(line, { chunk[1], chunk[2] })
+      if chunk.filetype ~= nil then
+        vim.list_extend(line, highlight.chunks(chunk[1], chunk.filetype))
+      else
+        table.insert(line, { chunk[1], chunk[2] })
+      end
     end
     local elapsed = vim.uv.now() - started[running.id]
     if elapsed >= slow_tool then
@@ -53,8 +58,7 @@ function Footer:draw()
   end
   self.started = started
   -- like the tools will be once they finish
-  local last_kind = self.layout.last_kind
-  if #lines > 0 and last_kind ~= 'tool' and last_kind ~= 'text' then table.insert(lines, 1, {}) end
+  if #lines > 0 and self.layout:spaced('tool') then table.insert(lines, 1, {}) end
   if state.status ~= nil then
     local elapsed = util.format_duration(math.floor((vim.uv.now() - state.status_since) / 1000))
     -- the empty line before the separator spaces it below
@@ -89,16 +93,22 @@ function Footer:update()
         if vim.api.nvim_buf_is_loaded(self.bufnr) then self:draw() end
       end)
     )
-  elseif not running and self.timer ~= nil then
-    self:close()
+  elseif not running then
+    self:stop_timer()
   end
   self:draw()
 end
 
-function Footer:close()
+function Footer:stop_timer()
   if self.timer == nil then return end
   self.timer:close()
   self.timer = nil
+end
+
+--- Stops counting, and takes the footer out of the buffer
+function Footer:close()
+  self:stop_timer()
+  if vim.api.nvim_buf_is_valid(self.bufnr) then vim.api.nvim_buf_clear_namespace(self.bufnr, ns, 0, -1) end
 end
 
 return M

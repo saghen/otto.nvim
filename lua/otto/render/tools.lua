@@ -6,15 +6,7 @@ local util = require('otto.util')
 local M = {}
 
 M.max_output_lines = 50
-
---- @alias otto.Chunks { [1]: string, [2]: string?, filetype?: string }[] Text and highlight group pairs, like virtual
---- text, or text that highlights as its filetype
-
---- @param chunks otto.Chunks
---- @return string
-function M.join(chunks)
-  return vim.iter(chunks):map(function(chunk) return chunk[1] end):join('')
-end
+local slow_command = 15 -- seconds that commands run for before their headers keep how long they ran
 
 --- @param text string
 --- @return string
@@ -35,7 +27,7 @@ function M.section(lines, filetype)
   return {
     lines = vim.list_slice(lines, 1, M.max_output_lines),
     filetype = filetype,
-    truncated = #lines - M.max_output_lines,
+    truncated = math.max(#lines - M.max_output_lines, 0),
   }
 end
 
@@ -87,26 +79,30 @@ local required = {
 }
 local optional = { pattern = 'string', description = 'string', offset = 'number', limit = 'number' }
 
+--- @param list any[]
+--- @return boolean
+local function strings(list)
+  return vim.iter(list):all(function(item) return type(item) == 'string' end)
+end
+
 --- @param tool string
 --- @param args any
---- @return boolean whether the args are what the tool takes, which models sometimes get wrong
+--- @return boolean valid Whether the args are what the tool takes, which models sometimes get wrong
 function M.valid(tool, args)
   if type(args) ~= 'table' then return false end
-  for field, kind in pairs(vim.tbl_extend('force', optional, required[tool] or {})) do
-    if (args[field] ~= nil or (required[tool] or {})[field]) and type(args[field]) ~= kind then return false end
+  local needed = required[tool] or {}
+  for field, kind in pairs(vim.tbl_extend('force', optional, needed)) do
+    if (args[field] ~= nil or needed[field]) and type(args[field]) ~= kind then return false end
   end
-  local paths = type(args.path) == 'table' and args.path or { args.path or '' }
-  local urls = tool == 'fetch' and args.urls or { '' }
-  for _, text in ipairs(vim.list_extend(vim.list_extend({}, paths), urls)) do
-    if type(text) ~= 'string' then return false end
-  end
-  return #urls > 0
+  if not strings(type(args.path) == 'table' and args.path or { args.path }) then return false end
+  -- which shows nothing without a url
+  return tool ~= 'fetch' or #args.urls > 0 and strings(args.urls)
 end
 
 --- @param tool string
 --- @param args? table
---- @return { tool: string, args: table } as it shows, like the agent's own tools when the args aren't what the tool
---- takes, so that it shows what the agent sent
+--- @return otto.ToolCall as it shows, whose args are what the tool takes, like the `path` string of reads, edits and
+--- writes, or else like the agent's own tools, so that it shows what the agent sent
 function M.display_call(tool, args)
   args = args or {}
   if M.valid(tool, args) then return { tool = tool, args = args } end
@@ -114,7 +110,7 @@ function M.display_call(tool, args)
 end
 
 --- @param tool string
---- @param args table
+--- @param args otto.ToolArgs
 --- @return otto.Chunks like "read lua/otto/init.lua:10-20"
 function M.header(tool, args)
   if tool == 'bash' then
@@ -161,7 +157,7 @@ local searchers = { rg = true, grep = true, ag = true }
 
 --- Describes the output of a tool by what produced it
 --- @param tool string
---- @param args table
+--- @param args otto.ToolArgs
 --- @param text string
 --- @return otto.Section
 function M.output_section(tool, args, text)
@@ -255,6 +251,65 @@ function M.diff_counts(diff)
     if line.sign == '-' then removed = removed + 1 end
   end
   return added, removed
+end
+
+--- The header of an edit, with how many lines it added and removed
+--- @param call otto.ToolCall
+--- @param diff otto.DiffLine[]
+--- @return otto.Chunks
+function M.diff_header(call, diff)
+  local header = M.header(call.tool, call.args)
+  local added, removed = M.diff_counts(diff)
+  return vim.list_extend(header, { { ('  +%d'):format(added), 'Added' }, { (' -%d'):format(removed), 'Removed' } })
+end
+
+--- A file that was written, all of it, since its block folds
+--- @param args otto.ToolArgs Of a write, whose path and content `display_call` checked
+--- @return otto.Section
+--- @return otto.Chunks header With the lines it added
+function M.written(args)
+  local path = args.path --[[@as string]]
+  local content = args.content --[[@as string]]
+  -- without the line that the last newline would start
+  local lines = content == '' and {} or vim.split((content:gsub('\n$', '')), '\n')
+  local header = M.header('write', args)
+  table.insert(header, { ('  +%d'):format(#lines), 'Added' })
+  return { lines = lines, filetype = vim.filetype.match({ filename = path }), path = path, lnum = 1 }, header
+end
+
+--- The header of a tool that ended, with how it ended when it failed, and how long commands ran once that's a while
+--- @param call otto.ToolCall
+--- @param result otto.ToolResultEvent
+--- @param seconds? integer That it ran for
+--- @param detail? string The first line of its output, which says why it failed
+--- @return otto.Chunks
+function M.result_header(call, result, seconds, detail)
+  local header = M.header(call.tool, call.args)
+  local bash = call.tool == 'bash'
+  if bash and seconds and seconds >= slow_command then
+    table.insert(header, { '  ' .. util.format_duration(seconds), 'OttoStatusTime' })
+  end
+  local code = result.exit_code
+  if bash and code and code ~= 0 then
+    table.insert(header, { '  exit ' .. code, 'OttoToolFailed' })
+  elseif not result.ok then
+    vim.list_extend(header, { { '  failed', 'OttoToolFailed' }, { ' ' .. (detail or ''), 'OttoToolDetail' } })
+  end
+  return header
+end
+
+--- The sections below the header of a tool that ended: its output, after the command of commands that the header
+--- doesn't show whole, since it only shows their description or first line
+--- @param call otto.ToolCall
+--- @param output otto.Section
+--- @return otto.Section[]
+function M.result_sections(call, output)
+  local sections = #output.lines > 0 and { output } or {}
+  local command = call.tool == 'bash' and vim.split(vim.trim(call.args.command), '\n')
+  if command and (#command > 1 or call.args.description ~= nil) then
+    table.insert(sections, 1, M.section(command, 'bash'))
+  end
+  return sections
 end
 
 return M

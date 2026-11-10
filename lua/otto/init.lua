@@ -1,8 +1,10 @@
 -- Experimental neovim-native agent buffer
 
+local buffers = require('otto.buffers')
 local config = require('otto.config')
 local providers = require('otto.providers')
 local uri = require('otto.uri')
+local util = require('otto.util')
 local view = require('otto.view')
 local winbar = require('otto.ui.winbar')
 
@@ -13,15 +15,16 @@ function M.setup(opts) config.set(opts or {}) end
 
 --- Opens a new session
 --- @param name? string
---- @param provider? string Defaults to `default_provider`
+--- @param provider? otto.ProviderName Defaults to `default_provider`
 function M.new(name, provider)
-  provider = provider or config.default_provider
-  local session_uri = uri.unique(provider, providers.get(provider).new_id(name))
-  view.pending_names[session_uri] = name
-  vim.cmd.edit(session_uri)
+  provider = provider or config.get().default_provider
+  local found = providers.get(provider)
+  if found == nil then return util.notify('unknown agent: ' .. provider) end
+  view.open(uri.unique(provider, found.new_id(name)), name)
 end
 
---- Sends a reference to lines of the current file to the most recent session
+--- Sends a reference to lines of the current file to the input of the most recent session, like `path:1-2`, without
+--- submitting it
 --- @param first integer
 --- @param last integer
 function M.send(first, last)
@@ -29,19 +32,11 @@ function M.send(first, last)
   M.append(first == last and ('`%s:%d`'):format(path, first) or ('`%s:%d-%d`'):format(path, first, last))
 end
 
---- @return otto.View[] views of open sessions, most recently used first
-local function open_views()
-  local views = view.views
-  local infos = vim.tbl_filter(function(info) return views[info.bufnr] ~= nil end, vim.fn.getbufinfo({ bufloaded = 1 }))
-  table.sort(infos, function(a, b) return a.lastused > b.lastused end)
-  return vim.tbl_map(function(info) return views[info.bufnr] end, infos)
-end
-
 --- Appends text to the most recently used session by default, or a new one, and starts insert mode
 --- @param text string
 --- @param session_bufnr? integer Of the session
 function M.append(text, session_bufnr)
-  local recent = view.views[session_bufnr] or open_views()[1]
+  local recent = session_bufnr and buffers.get(session_bufnr) or buffers.recent()[1]
   if recent ~= nil then
     vim.cmd.buffer(recent.bufnr)
   else
@@ -60,13 +55,13 @@ end
 --- https://github.com/neovim/neovim/issues/12866
 --- @return string
 function M.statuscolumn()
-  local current = view.views[vim.api.nvim_win_get_buf(vim.g.statusline_winid)]
+  local current = buffers.get(vim.api.nvim_win_get_buf(vim.g.statusline_winid))
   return current and current.transcript:is_prompt(vim.v.lnum - 1) and '%#OttoPrompt#  ' or '  '
 end
 
 --- @return string
 function M.winbar()
-  local current = view.views[vim.api.nvim_win_get_buf(vim.g.statusline_winid)]
+  local current = buffers.get(vim.api.nvim_win_get_buf(vim.g.statusline_winid))
   return current and winbar.render(current) or ''
 end
 

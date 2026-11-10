@@ -13,6 +13,7 @@ function M.new_id(name) return ((name or os.date('%Y_%m_%d_%H%M%S')):gsub('[^%w.
 
 M.open = agent.open
 M.files = files.list
+M.parse = files.parse
 M.names = files.names
 
 return M

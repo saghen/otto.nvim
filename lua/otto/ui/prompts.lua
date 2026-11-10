@@ -39,15 +39,15 @@ function M.rewind(view, prompt)
   if prompt.id == nil then return util.notify("the agent can't rewind to this prompt", vim.log.levels.WARN) end
   local fork = view.session.agent:fork(prompt.id)
   if fork == nil then return end
-  local views = require('otto.view')
-  views.restart(view.bufnr, fork.id)
-  history.insert(views.views[view.bufnr], { text = fork.text })
+  local forked = view:restart(fork.id)
+  if forked ~= nil then history.recall(forked, { text = fork.text }) end
 end
 
 --- Picks a prompt of the session, which the transcript scrolls to
 --- @param view otto.View
---- @param rewind? boolean Whether accepting rewinds to it, instead of jumping to it
-function M.pick(view, rewind)
+--- @param opts? { rewind?: boolean } Whether accepting rewinds to it, instead of jumping to it
+function M.pick(view, opts)
+  local rewind = opts ~= nil and opts.rewind == true
   util.run_task(function()
     local prompts = M.list(view)
     if #prompts == 0 then return util.notify('no prompts yet', vim.log.levels.WARN) end
@@ -56,9 +56,12 @@ function M.pick(view, rewind)
       or vim.fn.bufwinid(view.bufnr)
     local saved = win ~= -1 and vim.api.nvim_win_call(win, vim.fn.winsaveview)
 
+    --- @return boolean whether the window to show the prompts in is still there
+    local function has_win() return win ~= -1 and vim.api.nvim_win_is_valid(win) end
+
     --- @param prompt otto.PromptItem?
     local function preview(prompt)
-      if win == -1 or not vim.api.nvim_win_is_valid(win) then return end
+      if not has_win() then return end
       vim.api.nvim_win_call(win, function()
         if prompt == nil then return vim.fn.winrestview(saved) end
         vim.api.nvim_win_set_cursor(win, { prompt.row + 1, 0 })
@@ -76,8 +79,10 @@ function M.pick(view, rewind)
 
     --- @param prompt otto.PromptItem
     local function accept(prompt)
-      if not rewind then return vim.api.nvim_win_set_cursor(win, { prompt.row + 1, 0 }) end
-      util.run_task(function() M.rewind(view, prompt) end)
+      if rewind then
+        return util.run_task(function() M.rewind(view, prompt) end)
+      end
+      if has_win() then vim.api.nvim_win_set_cursor(win, { prompt.row + 1, 0 }) end
     end
 
     pick.select({

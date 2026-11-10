@@ -1,6 +1,7 @@
 -- Claude Code's entries as the log, which are the same in its session files and its stream, along with what the
 -- decoder keeps between them
 
+local diff = require('otto.providers.diff')
 local event = require('otto.event')
 local util = require('otto.util')
 
@@ -30,18 +31,10 @@ tools.Task = tools.Agent
 --- Edits come with hunks
 --- @param patch { oldStart: integer, newStart: integer, lines: string[] }[]
 --- @return otto.DiffLine[]
-local function parse_diff(patch)
+local function parse_patch(patch)
   local lines = {}
   for _, hunk in ipairs(patch) do
-    local old = hunk.oldStart
-    local new = hunk.newStart
-    -- without lines like "\ No newline at end of file"
-    for _, line in ipairs(vim.tbl_filter(function(line) return not vim.startswith(line, '\\') end, hunk.lines)) do
-      local sign = line:sub(1, 1)
-      table.insert(lines, { sign = sign, lnum = sign == '-' and old or new, text = line:sub(2) })
-      if sign ~= '+' then old = old + 1 end
-      if sign ~= '-' then new = new + 1 end
-    end
+    vim.list_extend(lines, diff.hunk(hunk.lines, hunk.oldStart, hunk.newStart))
   end
   return lines
 end
@@ -88,6 +81,28 @@ function M.is_tagged(text) return tags[text:match('^<([%w-]+)[%s>]')] == true en
 --- @return otto.ClaudeDecoder
 function M.new() return { compaction = {}, calls = {}, agents = {}, handbacks = {}, notified = {}, prompts = {} } end
 
+--- @param log otto.Log
+--- @param decoder otto.ClaudeDecoder
+--- @param uuid string Of its entry
+--- @param parent? string Uuid of the entry before it
+--- @param text string
+--- @param at? integer
+local function add_prompt(log, decoder, uuid, parent, text, at)
+  table.insert(decoder.prompts, { uuid = uuid, parent = parent, text = vim.trim(text) })
+  log:user(vim.trim(text), at)
+end
+
+--- Adds a prompt that Claude Code started a turn with, which it only echoes with the answer, after the last entry
+--- @param log otto.Log
+--- @param decoder otto.ClaudeDecoder
+--- @param uuid string Of its entry, which the echo has
+--- @param text string
+function M.add_started_prompt(log, decoder, uuid, text)
+  local parent = decoder.last
+  decoder.last = uuid
+  add_prompt(log, decoder, uuid, parent, text)
+end
+
 --- @param text string
 --- @param name string Of the tag
 --- @return string?
@@ -121,7 +136,7 @@ end
 --- @param decoder otto.ClaudeDecoder
 --- @param notification table See `parse_notification`
 --- @param at? integer
-function M.task_end(log, decoder, notification, at)
+function M.add_task_end(log, decoder, notification, at)
   -- which the agent reads like a prompt
   log:interject()
   if notification.task_id == nil or notification.skip_transcript then return end
@@ -158,18 +173,20 @@ end
 --- @param decoder otto.ClaudeDecoder
 --- @param entry table
 --- @param at? integer
-local function tool_results(log, decoder, entry, at)
+local function add_tool_results(log, decoder, entry, at)
   local content = entry.message.content
+  -- of the entry's only result, or a string, like the error of one that failed
+  local details = entry.toolUseResult or entry.tool_use_result
+  if type(details) ~= 'table' then details = {} end
   for _, block in ipairs(content) do
     if block.type == 'tool_result' then
-      local details = entry.toolUseResult or entry.tool_use_result or {}
-      local patch = type(details) == 'table' and details.structuredPatch or nil
+      local patch = details.structuredPatch
       -- reads number their lines, but come with the file's content too
-      local file = #content == 1 and type(details) == 'table' and vim.tbl_get(details, 'file', 'content') or nil
+      local file = #content == 1 and vim.tbl_get(details, 'file', 'content') or nil
       local output = file or event.text_of(block.content or '')
       local result = { id = block.tool_use_id, ok = not block.is_error, output = util.trim_end(output) }
       -- new files come with an empty patch, and show their content
-      if patch ~= nil and #patch > 0 then result.diff = parse_diff(patch) end
+      if patch ~= nil and #patch > 0 then result.diff = parse_patch(patch) end
       local code, rest = result.output:match('^Exit code (%d+)\n?(.*)$')
       if code ~= nil then
         result.exit_code = tonumber(code)
@@ -180,7 +197,7 @@ local function tool_results(log, decoder, entry, at)
       if agent then
         decoder.agents[agent] = block.tool_use_id
         -- which the agent may run in the background without being asked
-        local async = type(details) == 'table' and details.isAsync or vim.startswith(result.output, 'Async agent')
+        local async = details.isAsync or vim.startswith(result.output, 'Async agent')
         -- what's left is metadata, or the agent's answer when the turn waited for it
         result.output = async and '' or vim.trim((result.output:gsub('\n*agentId: .*$', '')))
       end
@@ -232,14 +249,11 @@ function M.add(log, decoder, entry)
   -- prompts that the agent read while it worked, which the stream echoes like the others
   local attachment = entry.attachment or {}
   if attachment.type == 'queued_command' and vim.startswith(attachment.prompt or '', '<task-notification>') then
-    return M.task_end(log, decoder, parse_notification(attachment.prompt), at)
+    return M.add_task_end(log, decoder, parse_notification(attachment.prompt), at)
   end
-  local prompt = type(attachment.prompt) == 'string' and attachment.prompt or nil
+  local queued = type(attachment.prompt) == 'string' and attachment.prompt or nil
   if attachment.type == 'queued_command' and attachment.commandMode == 'prompt' then
-    if prompt and not M.is_tagged(prompt) then
-      table.insert(decoder.prompts, { uuid = entry.uuid, parent = parent, text = vim.trim(prompt) })
-      return log:user(vim.trim(prompt), at)
-    end
+    if queued and not M.is_tagged(queued) then return add_prompt(log, decoder, entry.uuid, parent, queued, at) end
     -- like messages from other sessions, which the agent reads like prompts
     return log:interject()
   end
@@ -280,18 +294,19 @@ function M.add(log, decoder, entry)
     )
   end
   if type(content) == 'table' then
-    tool_results(log, decoder, entry, at)
+    add_tool_results(log, decoder, entry, at)
     if vim.iter(content):any(function(block) return block.type == 'tool_result' end) then return end
     text = event.text_of(content)
   end
   if text == nil then return end
   if vim.startswith(text, '[Request interrupted') then return log:mark_aborted() end
-  if vim.startswith(text, '<task-notification>') then return M.task_end(log, decoder, parse_notification(text), at) end
+  if vim.startswith(text, '<task-notification>') then
+    return M.add_task_end(log, decoder, parse_notification(text), at)
+  end
   -- like /compact from Claude Code's own UI, which renders as the compaction
   if text == '/compact' or vim.startswith(text, '/compact ') then return end
   if M.is_tagged(text) then return log:interject() end
-  table.insert(decoder.prompts, { uuid = entry.uuid, parent = parent, text = vim.trim(text) })
-  log:user(vim.trim(text), at)
+  add_prompt(log, decoder, entry.uuid, parent, text, at)
 end
 
 return M

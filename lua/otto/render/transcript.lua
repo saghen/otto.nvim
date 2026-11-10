@@ -3,7 +3,8 @@
 -- like the quickfix line. An empty line and a separator come before the input
 
 local folds = require('otto.render.folds')
-local highlight = require('otto.highlight')
+local highlight = require('otto.render.highlight')
+local input = require('otto.input')
 local layout = require('otto.render.layout')
 local tools = require('otto.render.tools')
 local util = require('otto.util')
@@ -50,12 +51,12 @@ function Transcript:modify(fn)
   vim.bo[bufnr].undolevels = -1
   vim.bo[bufnr].modifiable = true
 
-  local input_row = util.input_row(bufnr)
+  local input_row = input.row(bufnr)
   -- the undo levels come back even when it fails
   local ok, err =
     pcall(fn, input_row > 0 and is_separator(bufnr, input_row - 1) and input_row - 2 or input_row, input_row)
 
-  input_row = util.input_row(bufnr)
+  input_row = input.row(bufnr)
   if input_row > 0 and not is_separator(bufnr, input_row - 1) then
     vim.api.nvim_buf_set_lines(bufnr, input_row, input_row, false, { '', '' })
     vim.api.nvim_buf_set_extmark(bufnr, separator_ns, input_row + 1, 0, {
@@ -83,7 +84,7 @@ function Transcript:anchor()
     pcall(vim.cmd.undojoin)
     vim.api.nvim_buf_set_lines(bufnr, -1, -1, false, vim.split(('\n'):rep(missing - 1), '\n'))
   end
-  if util.input_row(bufnr) ~= row then vim.api.nvim_buf_set_mark(bufnr, ':', row + 1, 0, {}) end
+  if input.row(bufnr) ~= row then vim.api.nvim_buf_set_mark(bufnr, ':', row + 1, 0, {}) end
 end
 
 --- @param namespace integer
@@ -125,9 +126,9 @@ end
 --- Adds the tool to its group, whose summary goes on its own line above the first
 --- @param block otto.Block
 --- @return integer row of the header
-function Transcript:grouped(block)
+function Transcript:insert_grouped(block)
   local group = block.group --[[@as { summary: otto.Chunks, first: boolean }]]
-  local summary = tools.join(group.summary)
+  local summary = util.join(group.summary)
   local row
   -- or when the first failed to render
   if group.first or self.group_fold == nil then
@@ -149,10 +150,11 @@ end
 function Transcript:block(block)
   local bufnr = self.bufnr
   if block.group == nil then self.group_fold = nil end
-  local row = block.group and self:grouped(block) or self:insert(block, block.lines)
+  local row = block.group and self:insert_grouped(block) or self:insert(block, block.lines)
   if block.markdown then highlight.lines(bufnr, row, 0, block.lines, 'markdown') end
-  if block.header then self:highlight_chunks(ns, row, #block.indent, block.header) end
-  local col = #(block.indent or '') + #layout.body_indent
+  local indent = block.indent or ''
+  if block.header then self:highlight_chunks(ns, row, #indent, block.header) end
+  local col = #indent + #layout.body_indent
   local first = row + 1
   for _, section in ipairs(block.sections or {}) do
     if section.filetype ~= nil then highlight.lines(bufnr, first, col, section.lines, section.filetype) end
@@ -245,14 +247,6 @@ end
 function Transcript:prompts()
   local marks = vim.api.nvim_buf_get_extmarks(self.bufnr, user_ns, 0, -1, { details = true })
   return vim.tbl_map(function(mark) return self:prompt(mark) end, marks)
-end
-
---- @param row integer 0-indexed
---- @return otto.TranscriptPrompt? that the row is in
-function Transcript:prompt_at(row)
-  local opts = { overlap = true, limit = 1, details = true }
-  local mark = vim.api.nvim_buf_get_extmarks(self.bufnr, user_ns, { row, 0 }, { row, 0 }, opts)[1]
-  return mark and self:prompt(mark)
 end
 
 --- @param row integer 0-indexed

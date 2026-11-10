@@ -2,11 +2,19 @@
 -- buffer, like in after/ftplugin/otto.lua. Providers read theirs when they start
 
 --- @class (exact) otto.Config
---- @field default_provider 'pi' | 'claude' | 'codex' Of `:Otto` and new sessions
+--- @field default_provider otto.ProviderName Of `:Otto` and new sessions
 --- @field keymaps table<string, otto.Keymap> | false Of the session's buffer, false for none
---- @field providers { pi: otto.ProviderConfig, claude: otto.ClaudeConfig, codex: otto.ProviderConfig }
+--- @field providers otto.ProvidersConfig
 
---- @alias otto.Keymap string | false | table<string, string | false> Command, or command by mode, like { n = 'open', i = 'newline' }
+--- @alias otto.ProviderName 'pi' | 'claude' | 'codex' Like `uri.providers`
+
+--- Command, or command by mode, like { n = 'open', i = 'newline' }
+--- @alias otto.Keymap string | false | table<string, string | false>
+
+--- @class (exact) otto.ProvidersConfig
+--- @field pi otto.ProviderConfig
+--- @field claude otto.ClaudeConfig
+--- @field codex otto.ProviderConfig
 
 --- @class (exact) otto.ProviderConfig
 --- @field cmd string[] Before otto's arguments, like { 'claude' } or a wrapper
@@ -16,12 +24,12 @@
 --- @class (exact) otto.ClaudeConfig : otto.ProviderConfig
 --- @field model string
 --- @field effort string
---- @field permission_mode string
+--- @field permission_mode otto.ClaudePermissionMode
 
 --- @class (exact) otto.ConfigPartial : otto.Config, {}
---- @field default_provider? 'pi' | 'claude' | 'codex'
+--- @field default_provider? otto.ProviderName
 --- @field keymaps? table<string, otto.Keymap> | false
---- @field providers? { pi?: otto.ProviderConfigPartial, claude?: otto.ClaudeConfigPartial, codex?: otto.ProviderConfigPartial }
+--- @field providers? otto.ProvidersConfigPartial
 
 --- @class (exact) otto.ProviderConfigPartial : otto.ProviderConfig, {}
 --- @field cmd? string[]
@@ -34,9 +42,12 @@
 --- @field env? table<string, string>
 --- @field model? string
 --- @field effort? string
---- @field permission_mode? string
+--- @field permission_mode? otto.ClaudePermissionMode
 
-local commands = require('otto.ui.commands')
+--- @class (exact) otto.ProvidersConfigPartial : otto.ProvidersConfig, {}
+--- @field pi? otto.ProviderConfigPartial
+--- @field claude? otto.ClaudeConfigPartial
+--- @field codex? otto.ProviderConfigPartial
 
 local keymaps = {
   ['<CR>'] = { n = 'open', i = 'newline' },
@@ -73,11 +84,11 @@ local function normalize_lhs(lhs)
   )
 end
 
---- @param keymaps table<string, otto.Keymap>
+--- @param maps table<string, otto.Keymap>
 --- @return table<string, otto.Keymap>
-local function normalize(keymaps)
+local function normalize(maps)
   local normalized = {}
-  for lhs, value in pairs(keymaps) do
+  for lhs, value in pairs(maps) do
     normalized[type(lhs) == 'string' and normalize_lhs(lhs) or lhs] = value
   end
   return normalized
@@ -87,19 +98,16 @@ end
 local function schema()
   local types = require('blink.lib.config').types
 
+  -- only the shape, since the commands load most of otto, and keymaps.lua checks them as it maps them
   local keymaps_type = types.validator('map(keycode, command | false | map(mode, command | false))', function(val)
     if type(val) ~= 'table' then return false end
     for lhs, value in pairs(val) do
       if not types.keycode.validator(lhs) then return false, ('[%s]: expected keycode'):format(tostring(lhs)) end
-      if value ~= false and type(value) ~= 'string' and type(value) ~= 'table' then
-        return false, ('[%s]: expected command, false or table, got %s'):format(lhs, vim.inspect(value))
-      end
-      for mode, name in pairs(commands.by_mode(value)) do
-        local path = type(value) == 'table' and ('[%s].%s'):format(lhs, mode) or ('[%s]'):format(lhs)
-        local command = type(name) == 'string' and commands.get(name)
-        if not command then return false, ('%s: unknown command %s'):format(path, vim.inspect(name)) end
-        if not vim.list_contains(command.modes or { 'n' }, mode) then
-          return false, ('%s: %s has no keymap in this mode'):format(path, name)
+      local by_mode = type(value) == 'table' and value or { value }
+      for mode, name in pairs(by_mode) do
+        if name ~= false and type(name) ~= 'string' then
+          local path = type(value) == 'table' and ('[%s].%s'):format(lhs, mode) or ('[%s]'):format(lhs)
+          return false, ('%s: expected command or false, got %s'):format(path, vim.inspect(name))
         end
       end
     end
@@ -117,16 +125,21 @@ local function schema()
   end
 
   return {
-    default_provider = { 'pi', types.enum({ 'pi', 'claude', 'codex' }) },
+    default_provider = { 'pi', types.enum(require('otto.uri').providers) },
     keymaps = { normalize(keymaps), { types.enum({ false }), keymaps_type } },
     providers = {
       pi = provider('pi'),
       claude = provider('claude', {
         model = { 'claude-opus-5-5', 'string' },
         effort = { 'high', 'string' },
-        -- asks only for what its classifier doesn't allow
-        permission_mode = { 'auto', 'string' },
+        -- asks only for what its classifier doesn't allow. Of otto.ClaudePermissionMode
+        permission_mode = {
+          'auto',
+          types.enum({ 'default', 'manual', 'acceptEdits', 'plan', 'auto', 'dontAsk', 'bypassPermissions' }),
+        },
       }),
+      -- whose approval policy and sandbox come from Codex's config, which args can override, like
+      -- { '-c', 'approval_policy="on-request"' }
       codex = provider('codex'),
     },
   }
@@ -135,7 +148,11 @@ end
 -- created on first use, since blink.lib may be added to the runtimepath after otto loads
 local cached --- @type blink.lib.Config?
 local function instance()
-  if cached == nil then cached = require('blink.lib.config').new(schema(), { validate = false }) end
+  if cached ~= nil then return cached end
+  if vim.async == nil then error('otto: requires a Neovim nightly with vim.async', 0) end
+  local ok, lib = pcall(require, 'blink.lib.config')
+  if not ok then error('otto: requires blink.lib, of its vim-async branch', 0) end
+  cached = lib.new(schema(), { validate = false })
   return cached
 end
 
@@ -164,8 +181,4 @@ function M.set(tbl, opts)
   return M
 end
 
---- @type otto.Config | { get: fun(filter?: blink.lib.config.Filter): otto.Config, set: fun(tbl: otto.ConfigPartial, opts?: blink.lib.config.SetOpts) }
-return setmetatable(M, {
-  __index = function(_, key) return M.get()[key] end,
-  __call = function(_, ...) return M.set(...) end,
-})
+return M

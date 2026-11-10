@@ -1,4 +1,5 @@
--- pi's messages as the log, which are the same in its session files and its events
+-- pi's messages as the log, which are the same in its session files and its events, and the other entries of its
+-- session files
 
 local event = require('otto.event')
 local util = require('otto.util')
@@ -23,8 +24,14 @@ local function parse_diff(diff)
   end, vim.split(diff, '\n'))
 end
 
+--- @param provider? string Of the model, which older entries don't have
+--- @param id string
+--- @return string model like "openrouter/deepseek/deepseek-v4.1-flash", the same as `Agent:models`
+function M.model_id(provider, id) return provider and provider .. '/' .. id or id end
+
 --- @class otto.PiDecoder What the decoder keeps between messages
 --- @field cost number Of the session so far
+--- @field stop_reason? string Of the last answer in the file, which ends the agent's run unless it calls tools
 
 --- @return otto.PiDecoder
 function M.new() return { cost = 0 } end
@@ -72,6 +79,28 @@ function M.add(log, decoder, msg, at)
       result.exit_code = tonumber(code)
     end
     log:tool_result(result, at)
+  end
+end
+
+--- Adds an entry of the session file to the log, or to the state
+--- @param log otto.Log
+--- @param decoder otto.PiDecoder
+--- @param entry table
+function M.add_entry(log, decoder, entry)
+  local at = event.parse_iso(entry.timestamp)
+  if entry.type == 'message' then
+    M.add(log, decoder, entry.message, at)
+    if entry.message.role == 'assistant' then decoder.stop_reason = entry.message.stopReason end
+  elseif entry.type == 'compaction' then
+    -- after a run that ended, like /compact between turns, which comes after the end of its turn, like live
+    if decoder.stop_reason and decoder.stop_reason ~= 'toolUse' then log:end_turn() end
+    log:compaction({ summary = entry.summary, before = entry.tokensBefore }, at)
+  elseif entry.type == 'session_info' then
+    log:patch_state({ name = entry.name })
+  elseif entry.type == 'model_change' then
+    log:patch_state({ model = M.model_id(entry.provider, entry.modelId) })
+  elseif entry.type == 'thinking_level_change' then
+    log:patch_state({ effort = entry.thinkingLevel })
   end
 end
 

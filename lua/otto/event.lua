@@ -4,33 +4,61 @@
 
 local M = {}
 
---- @class otto.Event
---- @field type 'user' | 'text' | 'tool_call' | 'tool_result' | 'compaction' | 'error' | 'turn_end'
+--- @alias otto.Event
+---| otto.UserEvent
+---| otto.TextEvent
+---| otto.ToolCallEvent
+---| otto.ToolResultEvent
+---| otto.CompactionEvent
+---| otto.ErrorEvent
+---| otto.TurnEndEvent
+
+--- @class otto.EventBase
 --- @field at integer Milliseconds since the epoch, from the provider's record when it has one
---- user, text
---- @field text? string
---- tool_call, tool_result
---- @field id? string
---- @field tool? string `read`, `edit`, `write`, `bash`, `grep`, `find`, `ls`, `web_search`, `fetch`, `agent`, or the
+
+--- @class otto.UserEvent : otto.EventBase
+--- @field type 'user'
+--- @field text string
+
+--- @class otto.TextEvent : otto.EventBase
+--- @field type 'text'
+--- @field text string
+
+--- @class otto.ToolCallEvent : otto.EventBase
+--- @field type 'tool_call'
+--- @field id string
+--- @field tool string `read`, `edit`, `write`, `bash`, `grep`, `find`, `ls`, `web_search`, `fetch`, `agent`, or the
 --- agent's own
---- @field args? table See `otto.ToolArgs`
---- @field ok? boolean
+--- @field args? otto.ToolArgs
+
+--- @class otto.ToolResultEvent : otto.EventBase
+--- @field type 'tool_result'
+--- @field id string Of its call
+--- @field ok boolean
 --- @field output? string
 --- @field exit_code? integer Of commands
 --- @field diff? otto.DiffLine[] Of edits
---- compaction
+
+--- @class otto.CompactionEvent : otto.EventBase Optional, since Codex keeps the summary to itself
+--- @field type 'compaction'
 --- @field summary? string
 --- @field before? integer Tokens in the context
 --- @field after? integer
---- error
---- @field message? string
---- turn_end, which every turn has, since a turn starts with what the agent does after the last one ended
---- @field aborted? boolean
---- @field started? integer When the turn started
---- @field worked? boolean Whether the agent did anything in the turn, unlike for commands like /compact
+
+--- @class otto.ErrorEvent : otto.EventBase
+--- @field type 'error'
+--- @field message string
+
+--- @class otto.TurnEndEvent : otto.EventBase Which every turn has, since a turn starts with what the agent does after
+--- the last one ended
+--- @field type 'turn_end'
+--- @field aborted boolean
+--- @field started integer When the turn started
+--- @field worked boolean Whether the agent did anything in the turn, unlike for commands like /compact
 
 --- @class otto.ToolArgs Of the tools that otto knows, while others keep the agent's own
---- @field path? string | string[] read, edit, write, grep, find, ls
+--- @field path? string | string[] read, edit, write: a string, which `tools.display_call` checks. grep, find, ls: or
+--- a list, of agents that take several
 --- @field offset? integer read: line number of the first line
 --- @field limit? integer read: count of lines
 --- @field content? string write
@@ -42,6 +70,12 @@ local M = {}
 --- @field prompt? string agent
 --- @field type? string agent: its kind, like "general-purpose"
 --- @field background? boolean agent, bash: whether it ends as a second result
+
+--- @class otto.ToolCall
+--- @field tool string
+--- @field args otto.ToolArgs
+
+--- @alias otto.Status 'working' | 'thinking' | 'compacting' What the agent is doing
 
 --- @class otto.DiffLine
 --- @field sign '+' | '-' | ' ' | nil Nothing for the gaps between hunks
@@ -57,8 +91,9 @@ local M = {}
 --- @field context_window? integer
 --- @field context_tokens? integer Tokens in the context, as of the last answer or compaction
 --- @field cost? number Dollars, for the whole session
---- @field status? 'working' | 'thinking' | 'compacting' | false False once the agent stopped
+--- @field status? otto.Status | false False once the agent stopped
 --- @field queue? otto.Queued[] Prompts that the agent hasn't read yet, including the one that was just sent
+--- @field commands? otto.AgentCommand[] The agent's own, like pi's skills
 
 --- @class otto.Queued
 --- @field text string
@@ -70,6 +105,7 @@ local M = {}
 --- @field items? string[] select
 --- @field default? string input
 --- @field respond fun(value: any) With nil when cancelled
+--- @field cancelled? boolean Once the agent stopped waiting, like when it was answered elsewhere
 
 --- @param steering? string[]
 --- @param follow_up? string[]

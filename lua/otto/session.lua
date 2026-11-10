@@ -14,7 +14,7 @@ local util = require('otto.util')
 --- @field context_window? integer
 --- @field context_tokens? integer
 --- @field cost? number Dollars
---- @field status? 'working' | 'thinking' | 'compacting'
+--- @field status? otto.Status
 --- @field status_since? integer When the agent started working, in milliseconds of the event loop
 --- @field queue otto.Queued[] Prompts that the agent hasn't read yet
 --- @field commands otto.AgentCommand[]
@@ -23,17 +23,20 @@ local util = require('otto.util')
 --- @field on_log? fun(event: otto.Event) Once it's in the log
 --- @field on_state? fun(patch: otto.StatePatch) Once the state has it
 
+--- @class otto.RunningCall : otto.ToolCall
+--- @field id string
+
 --- @class otto.Session
 --- @field uri string Like claude://<id>, which changes when the agent creates the id
 --- @field provider otto.Provider
 --- @field agent otto.Agent
 --- @field state otto.State
 --- @field events otto.Event[] The log so far, as the agent said it
---- @field running_calls { id: string, tool: string, args: table }[] Of the turn, without results yet, in order
+--- @field running_calls otto.RunningCall[] Of the turn, without results yet, in order
 --- @field listeners otto.Listener[]
 --- @field request_lock vim.async.Semaphore Answered one at a time, since pickers can't show two at once
 --- @field live? boolean Whether the history was replayed, after which events run `User` autocmds
---- @field started? boolean Whether `OttoAgentStart` ran, until `OttoAgentSettled` does
+--- @field start_emitted? boolean Whether `OttoAgentStart` ran, until `OttoAgentSettled` does
 --- @field turn_end? otto.Event Of the last turn, until the agent settles
 local Session = {}
 Session.__index = Session
@@ -92,15 +95,17 @@ function Session:emit(pattern, fields)
   if #pending == 1 and not running then vim.schedule(run_pending) end
 end
 
-function Session:start()
-  if self.started or not self.live then return end
-  self.started = true
+--- Fires OttoAgentStart as the agent starts working, once until it settles
+function Session:emit_start()
+  if self.start_emitted or not self.live then return end
+  self.start_emitted = true
   self:emit('OttoAgentStart')
 end
 
-function Session:settle()
-  if not self.started then return end
-  self.started = false
+--- Fires OttoAgentSettled once it stops, with how its turn ended
+function Session:emit_settled()
+  if not self.start_emitted then return end
+  self.start_emitted = false
   self:emit('OttoAgentSettled', { event = self.turn_end })
   self.turn_end = nil
 end
@@ -141,6 +146,8 @@ function Session:on_request(request)
   })
   util.run_task(function()
     self.request_lock:with(function()
+      -- while it waited for another
+      if request.cancelled then return end
       -- cancelled when the picker fails, since the agent waits for an answer
       local ok, value = pcall(function()
         if request.kind == 'select' then return util.select(request.items, { prompt = request.prompt }) end
@@ -155,7 +162,7 @@ function Session:on_request(request)
   end)
 end
 
-local keys = { 'id', 'name', 'model', 'effort', 'context_window', 'context_tokens', 'cost', 'queue' }
+local keys = { 'id', 'name', 'model', 'effort', 'context_window', 'context_tokens', 'cost', 'queue', 'commands' }
 
 --- @param patch otto.StatePatch
 function Session:on_state(patch)
@@ -178,13 +185,13 @@ function Session:on_state(patch)
   self:emit('OttoState', { patch = patch })
   if was == nil and now ~= nil then
     self.turn_end = nil
-    self:start()
+    self:emit_start()
   end
-  if was ~= nil and now == nil then self:settle() end
+  if was ~= nil and now == nil then self:emit_settled() end
 end
 
 function Session:close()
-  self:settle()
+  self:emit_settled()
   self:emit('OttoSessionClose')
   M.sessions[self] = nil
   self.listeners = {}
@@ -193,9 +200,10 @@ end
 
 --- @class otto.SessionOpts
 --- @field name? string Display name of a new session
---- @field config? otto.ProviderConfig The global one by default
+--- @field bufnr? integer Of the buffer whose config the session runs with, the global config by default
+--- @field config? otto.ProviderConfig Of the provider, over the buffer's, like a fake agent's
 
---- Starts the agent for the session, and adds its history to the log
+--- Starts the agent for the session, and adds its history to the log, raising when the agent can't start
 --- @param session_uri string Like claude://<id>
 --- @param opts? otto.SessionOpts
 --- @return otto.Session
@@ -214,13 +222,18 @@ function M.open(session_uri, opts)
     listeners = {},
     request_lock = vim.async.semaphore(1),
   }, Session)
-  session.agent = provider.open(id, {
+  -- not the current buffer's, which blink.lib resolves without one
+  local cfg = config.get({ bufnr = opts.bufnr or -1 })
+  local provider_config = opts.config or cfg.providers[provider.name]
+  local opened, agent = pcall(provider.open, id, {
     name = opts.name,
-    config = opts.config or config.get().providers[provider.name],
+    config = provider_config,
     on_log = function(event) session:on_log(event) end,
     on_state = function(patch) session:on_state(patch) end,
     on_request = function(request) session:on_request(request) end,
   })
+  if not opened then error(agent, 0) end
+  session.agent = agent
   M.sessions[session] = true
   util.run_task(function()
     local ok, err = pcall(session.agent.replay, session.agent)
@@ -228,10 +241,10 @@ function M.open(session_uri, opts)
     session.live = true
     session:emit('OttoSessionStart')
     -- like when it was prompted while the history was replayed
-    if session.state.status ~= nil then session:start() end
+    if session.state.status ~= nil then session:emit_start() end
     if not ok then error(err, 0) end
     -- after the history, since Claude Code only lists its commands once it starts
-    session.state.commands = session.agent:commands()
+    session:on_state({ commands = session.agent:commands() })
   end)
   return session
 end

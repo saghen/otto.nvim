@@ -1,6 +1,7 @@
 -- Claude Code's session files, in ~/.claude/projects/<folder>
 
 local decode = require('otto.providers.claude.decode')
+local jsonl = require('otto.jsonl')
 
 local M = {}
 
@@ -17,36 +18,32 @@ end
 
 --- @param file string
 --- @param modified integer
---- @return otto.SavedSession
-local function parse(file, modified)
+--- @return otto.ParsedSession?
+function M.parse(file, modified)
+  local handle = io.open(file)
+  if handle == nil then return end
   local id = vim.fs.basename(file):gsub('%.jsonl$', '')
   local saved = { provider = 'claude', id = id, message_count = 0, modified = modified }
   local custom, ai, first_prompt
-  for line in io.lines(file) do
+  local function read(line)
     if line:find('"type":"custom-title"', 1, true) then
-      custom = vim.json.decode(line).customTitle
+      custom = jsonl.decode(line).customTitle
     elseif line:find('"type":"ai-title"', 1, true) then
-      ai = vim.json.decode(line).aiTitle
+      ai = jsonl.decode(line).aiTitle
     elseif line:find('"type":"user"', 1, true) or line:find('"type":"assistant"', 1, true) then
       saved.message_count = saved.message_count + 1
-      local content = first_prompt == nil
-        and line:find('"type":"user"', 1, true)
-        and vim.json.decode(line).message.content
+      local content = first_prompt == nil and line:find('"type":"user"', 1, true) and jsonl.decode(line).message.content
       -- tool results and the output of local commands aren't prompts
       if type(content) == 'string' and not decode.is_tagged(content) then first_prompt = content end
     end
   end
+  jsonl.each_line(handle, read)
   saved.name = custom or ai
   saved.prompt = first_prompt
   return saved
 end
 
---- @return otto.SessionFile[]
-function M.list()
-  return vim.tbl_map(
-    function(file) return { file = file, parse = parse } end,
-    vim.fn.glob(vim.fs.dirname(M.session_file('')) .. '/*.jsonl', false, true)
-  )
-end
+--- @return string[] files of the saved sessions
+function M.list() return vim.fn.glob(vim.fs.dirname(M.session_file('')) .. '/*.jsonl', false, true) end
 
 return M

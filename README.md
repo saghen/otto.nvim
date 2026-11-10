@@ -8,6 +8,8 @@
 
 Unlike my other projects, this project has been AI assisted, use at your own risk!
 
+It requires a Neovim nightly with `vim.async`, and [blink.lib](https://github.com/saghen/blink.lib)'s `vim-async` branch.
+
 ```lua
 vim.pack.add({
   "https://github.com/saghen/otto.nvim",
@@ -16,7 +18,7 @@ vim.pack.add({
 
 vim.keymap.set('n', '<leader>af', '<cmd>Otto<cr>', { desc = 'Find session' })
 vim.keymap.set('n', '<leader>ar', '<cmd>Otto resume<cr>', { desc = 'Resume session' })
-vim.keymap.set({ 'n', 'x' }, '<leader>as', ':Otto send<cr>', { desc = 'Send to agent' })
+vim.keymap.set({ 'n', 'x' }, '<leader>as', ':Otto send<cr>', { desc = 'Reference lines in the input' })
 
 vim.keymap.set('n', '<leader>ap', '<cmd>Otto pi<cr>', { desc = 'New Pi session' })
 vim.keymap.set('n', '<leader>aP', ':Otto pi ', { desc = 'New named Pi session' })
@@ -64,6 +66,8 @@ require('otto').setup({
       effort = 'high',
       permission_mode = 'auto',
     },
+    -- Codex's approval policy and sandbox come from its own config, which `args` can override, like
+    -- args = { '-c', 'approval_policy="on-request"' }
     codex = { cmd = { 'codex' }, args = {}, env = {} },
   },
 })

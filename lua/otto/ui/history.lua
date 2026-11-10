@@ -2,12 +2,16 @@
 -- input held when it was left is kept, the draft included, until the next submit. Unsent prompts are saved when
 -- their buffer unloads, and come back when the session opens again
 
+local input = require('otto.input')
+local jsonl = require('otto.jsonl')
 local pick = require('otto.ui.pick')
 local scroll = require('otto.ui.scroll')
 local util = require('otto.util')
 
-local history_path = vim.fn.stdpath('state') .. '/otto/history.jsonl'
-local drafts_path = vim.fn.stdpath('state') .. '/otto/drafts.json'
+--- As of now, rather than when this loaded
+--- @param name string
+--- @return string
+local function state_path(name) return vim.fs.joinpath(vim.fn.stdpath('state'), 'otto', name) end
 local draft_days = 30 -- before a draft is dropped, like those of sessions that were never saved
 
 --- @class otto.HistoryEntry
@@ -27,25 +31,23 @@ local M = {}
 local entries = {}
 local offset = 0 -- bytes of the file read so far
 
+local warned = false
+
+--- Warns once of the history or the drafts that can't be saved
+--- @param err? string
+local function warn(err)
+  if not warned then util.notify('history: ' .. tostring(err), vim.log.levels.WARN) end
+  warned = true
+end
+
 --- Reads what other instances and sessions added since the last read
-local function load()
-  local stat = vim.uv.fs_stat(history_path)
-  if stat == nil or stat.size == offset then return end
+local function read_appended()
+  local lines, restarted
+  lines, offset, restarted = jsonl.read_appended(state_path('history.jsonl'), offset)
   -- like when it was replaced
-  if stat.size < offset then
-    entries, offset = {}, 0
-  end
-  local file = io.open(history_path, 'r')
-  if file == nil then return end
-  file:seek('set', offset)
-  local data = file:read('*a')
-  file:close()
-  -- up to the last full line, since another instance may be writing one
-  local last = data:match('.*()\n')
-  if last == nil then return end
-  offset = offset + last
-  for line in data:sub(1, last):gmatch('[^\n]+') do
-    local ok, entry = pcall(vim.json.decode, line)
+  if restarted then entries = {} end
+  for _, line in ipairs(lines) do
+    local ok, entry = pcall(jsonl.decode, line)
     if ok and type(entry) == 'table' and type(entry.text) == 'string' then table.insert(entries, entry) end
   end
 end
@@ -55,10 +57,10 @@ end
 function M.add(text, session)
   -- a leading space keeps it out, like in shells
   if text:match('^%s') or vim.trim(text) == '' then return end
-  vim.fn.mkdir(vim.fs.dirname(history_path), 'p')
-  local file = io.open(history_path, 'a')
-  if file == nil then return end
-  -- read back by `load`, like those of other instances
+  vim.fn.mkdir(vim.fs.dirname(state_path('history.jsonl')), 'p')
+  local file, err = io.open(state_path('history.jsonl'), 'a')
+  if file == nil then return warn(err) end
+  -- read back by `read_appended`, like those of other instances
   file:write(
     vim.json.encode({ text = vim.trim(text), cwd = vim.fn.getcwd(), at = os.time(), session = session }) .. '\n'
   )
@@ -68,7 +70,7 @@ end
 --- @param cwd? string Of every folder when nil
 --- @return otto.HistoryEntry[] newest first, without repeats
 function M.list(cwd)
-  load()
+  read_appended()
   local list, seen = {}, {}
   for i = #entries, 1, -1 do
     local entry = entries[i]
@@ -84,7 +86,7 @@ end
 --- @param text string
 local function set_input(bufnr, text)
   vim.bo[bufnr].undolevels = vim.bo[bufnr].undolevels -- its own undo step, so that `u` brings back what was there
-  util.set_input(bufnr, text)
+  input.set(bufnr, text)
   if vim.api.nvim_get_current_buf() ~= bufnr then return end
   vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(bufnr), #text:match('[^\n]*$') })
   scroll.follow(bufnr)
@@ -100,8 +102,8 @@ local function leave(view)
 end
 
 --- @param view otto.View
---- @return otto.Recall
-local function start(view)
+--- @return otto.Recall of the view, with the newest entries unless it's stepping through them
+local function recall_of(view)
   local recall = view.recall or { index = 0, edits = {}, entries = {} }
   -- the newest entries, unless it's stepping through them
   if recall.index == 0 then
@@ -117,7 +119,7 @@ end
 --- @param view otto.View
 --- @param count integer
 function M.step(view, count)
-  local recall = start(view)
+  local recall = recall_of(view)
   local index = math.max(math.min(recall.index + count, #recall.entries), 0)
   if index == recall.index then return end
   leave(view)
@@ -129,8 +131,8 @@ end
 --- Puts text into the input, keeping what it held like stepping does, so that <M-n> brings it back
 --- @param view otto.View
 --- @param entry otto.HistoryEntry | { text: string } Of the history, or of somewhere else, like a prompt to edit
-function M.insert(view, entry)
-  local recall = start(view)
+function M.recall(view, entry)
+  local recall = recall_of(view)
   leave(view)
   recall.index = 0
   for i, other in ipairs(recall.entries) do
@@ -151,27 +153,33 @@ end
 local function write(file_path, data)
   vim.fn.mkdir(vim.fs.dirname(file_path), 'p')
   local temp = file_path .. '.' .. vim.uv.os_getpid()
-  local file = io.open(temp, 'w')
-  if file == nil then return end
+  local file, err = io.open(temp, 'w')
+  if file == nil then return warn(err) end
   file:write(data)
   file:close()
-  vim.uv.fs_rename(temp, file_path)
+  local ok, rename_err = vim.uv.fs_rename(temp, file_path)
+  if not ok then
+    vim.uv.fs_unlink(temp)
+    warn(rename_err)
+  end
 end
 
 --- Picks a prompt from the history into the input, which shows the one under the cursor
 --- @param view otto.View
---- @param all boolean Of every folder
-function M.pick(view, all)
+--- @param opts? { all?: boolean } Of every folder
+function M.pick(view, opts)
+  local all = opts ~= nil and opts.all == true
   local bufnr = view.bufnr
   local original = vim.fn.prompt_getinput(bufnr)
   --- @param text string
   local function show(text)
     if not vim.api.nvim_buf_is_valid(bufnr) then return end
-    -- outside of the undo history, which only keeps the prompt that's picked
+    -- outside of the undo history, which only keeps the prompt that's picked, even when it fails
     local undolevels = vim.bo[bufnr].undolevels
     vim.bo[bufnr].undolevels = -1
-    util.set_input(bufnr, text)
+    local ok, err = pcall(input.set, bufnr, text)
     vim.bo[bufnr].undolevels = undolevels
+    if not ok then error(err, 0) end
   end
 
   --- @param entry otto.HistoryEntry
@@ -193,14 +201,14 @@ function M.pick(view, all)
     on_accept = function(entry)
       if not vim.api.nvim_buf_is_valid(bufnr) then return end
       show(original)
-      M.insert(view, entry)
+      M.recall(view, entry)
     end,
   })
 end
 
 --- @return table<string, { text: string, at: integer }> by buffer name
 local function read_drafts()
-  local file = io.open(drafts_path, 'r')
+  local file = io.open(state_path('drafts.json'), 'r')
   if file == nil then return {} end
   local ok, drafts = pcall(vim.json.decode, file:read('*a'))
   file:close()
@@ -218,7 +226,7 @@ function M.save_drafts(bufnrs)
     local text = vim.fn.prompt_getinput(bufnr)
     drafts[vim.api.nvim_buf_get_name(bufnr)] = vim.trim(text) ~= '' and { text = text, at = os.time() } or nil
   end
-  write(drafts_path, vim.json.encode(drafts))
+  write(state_path('drafts.json'), vim.json.encode(drafts))
 end
 
 --- Puts back the unsent prompt of the session's buffer, unless the input has text already, like after a restart
@@ -230,7 +238,7 @@ function M.restore_draft(bufnr)
   if vim.fn.prompt_getinput(bufnr) == '' then set_input(bufnr, drafts[name].text) end
   -- back in the input, which saves it again when its buffer unloads, unless it's sent
   drafts[name] = nil
-  write(drafts_path, vim.json.encode(drafts))
+  write(state_path('drafts.json'), vim.json.encode(drafts))
 end
 
 --- Forgets where the session was in the history, and what the input held, once it submits

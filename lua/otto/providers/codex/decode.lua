@@ -1,6 +1,7 @@
 -- Codex's items as the log, which are the same in its history and once they complete. Items have no times, so they
 -- take those of their turns
 
+local diff = require('otto.providers.diff')
 local event = require('otto.event')
 local util = require('otto.util')
 
@@ -36,26 +37,22 @@ end
 
 --- @param change { diff: string, kind: { type: string } }
 --- @return otto.DiffLine[]
-local function parse_diff(change)
+local function parse_change(change)
+  -- a deleted file's diff is its contents, without signs
+  local deleted = change.kind.type == 'delete'
   local lines = {}
-  local old = 1
-  local new = 1
+  local hunk = { old = 1, new = 1, lines = {} }
+  local function flush() vim.list_extend(lines, diff.hunk(hunk.lines, hunk.old, hunk.new)) end
   for _, line in ipairs(vim.split(change.diff:gsub('\n$', ''), '\n')) do
     local old_start, new_start = line:match('^@@ %-(%d+),?%d* %+(%d+),?%d* @@')
     if old_start ~= nil then
-      old = tonumber(old_start)
-      new = tonumber(new_start)
-    elseif change.kind.type == 'delete' then
-      table.insert(lines, { sign = '-', lnum = old, text = line })
-      old = old + 1
-    elseif not vim.startswith(line, '\\') then -- like "\ No newline at end of file"
-      -- empty lines around the change can lose their space
-      local sign = line == '' and ' ' or line:sub(1, 1)
-      table.insert(lines, { sign = sign, lnum = sign == '-' and old or new, text = line:sub(2) })
-      if sign ~= '+' then old = old + 1 end
-      if sign ~= '-' then new = new + 1 end
+      flush()
+      hunk = { old = tonumber(old_start), new = tonumber(new_start), lines = {} }
+    else
+      table.insert(hunk.lines, deleted and '-' .. line or line)
     end
   end
+  flush()
   return lines
 end
 
@@ -86,7 +83,7 @@ function M.calls(item)
 end
 
 --- @param item table
---- @return table[] results, see `otto.Log:tool_result`
+--- @return otto.ToolResult[]
 local function results(item)
   if item.type == 'commandExecution' then
     local ok = item.status == 'completed' and (item.exitCode or 0) == 0
@@ -102,8 +99,8 @@ local function results(item)
   return vim
     .iter(ipairs(item.changes))
     :map(function(i, change)
-      local diff = ok and change.kind.type ~= 'add' and parse_diff(change) or nil
-      return { id = item.id .. ':' .. i, ok = ok, output = '', diff = diff }
+      local lines = ok and change.kind.type ~= 'add' and parse_change(change) or nil
+      return { id = item.id .. ':' .. i, ok = ok, output = '', diff = lines }
     end)
     :totable()
 end
@@ -113,7 +110,7 @@ end
 --- @param decoder otto.CodexDecoder
 --- @param item table subAgentActivity
 --- @param at? integer
-local function activity(log, decoder, item, at)
+local function add_activity(log, decoder, item, at)
   local thread = item.agentThreadId
   if item.kind == 'started' then
     -- named after their paths, since their nicknames are on their threads
@@ -143,7 +140,7 @@ function M.add(log, decoder, item, announced, at)
   end
   -- Codex keeps the summary to itself
   if item.type == 'contextCompaction' then return log:compaction({}, at) end
-  if item.type == 'subAgentActivity' then return activity(log, decoder, item, at) end
+  if item.type == 'subAgentActivity' then return add_activity(log, decoder, item, at) end
   for _, call in ipairs(M.calls(item)) do
     if not announced[call.id] then log:tool_call(call.id, call.tool, call.args, at) end
     announced[call.id] = nil
@@ -156,7 +153,7 @@ end
 
 --- @param turn table
 --- @return integer? started
---- @return integer? completed, in milliseconds since the epoch
+--- @return integer? completed In milliseconds since the epoch, like started
 function M.times(turn)
   local started = turn.startedAt and turn.startedAt * 1000
   local completed = turn.completedAt and turn.completedAt * 1000

@@ -1,6 +1,7 @@
 -- pi's session files, in ~/.pi/agent/sessions/<folder>
 
 local event = require('otto.event')
+local jsonl = require('otto.jsonl')
 
 local M = {}
 
@@ -20,34 +21,32 @@ end
 
 --- @param file string
 --- @param modified integer
---- @return otto.SavedSession
-local function parse(file, modified)
+--- @return otto.ParsedSession?
+function M.parse(file, modified)
+  local handle = io.open(file)
+  if handle == nil then return end
   local id = file:match('_([^/]+)%.jsonl$')
   local saved = { provider = 'pi', id = id, message_count = 0, modified = modified }
   local first_prompt
   -- decodes only the lines it needs, since sessions can be large
-  for line in io.lines(file) do
+  local function read(line)
     if line:find('"type":"session_info"', 1, true) then
-      saved.name = vim.json.decode(line).name
+      saved.name = jsonl.decode(line).name
     elseif line:find('"type":"message"', 1, true) then
       saved.message_count = saved.message_count + 1
       if first_prompt == nil and line:find('"role":"user"', 1, true) then
         -- not prompts of only images
-        local text = event.text_of(vim.json.decode(line).message.content)
+        local text = event.text_of(jsonl.decode(line).message.content)
         if vim.trim(text) ~= '' then first_prompt = text end
       end
     end
   end
+  jsonl.each_line(handle, read)
   saved.prompt = first_prompt
   return saved
 end
 
---- @return otto.SessionFile[]
-function M.list()
-  return vim.tbl_map(
-    function(file) return { file = file, parse = parse } end,
-    vim.fn.glob(folder() .. '/*.jsonl', false, true)
-  )
-end
+--- @return string[] files of the saved sessions
+function M.list() return vim.fn.glob(folder() .. '/*.jsonl', false, true) end
 
 return M

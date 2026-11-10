@@ -1,8 +1,8 @@
 -- Pickers, in minibuffer.nvim when it's set up, with notes aligned on the right and previews. Otherwise in
 -- `vim.ui.select`, without them
 
+local buffers = require('otto.buffers')
 local providers = require('otto.providers')
-local tools = require('otto.render.tools')
 local uri = require('otto.uri')
 local util = require('otto.util')
 
@@ -27,14 +27,15 @@ local function fit(chunks, width)
     local line = chunk[1]:gsub('\n.*', '')
     local chunk_width = vim.api.nvim_strwidth(line)
     if used + chunk_width > width then
-      -- by the cells of each character, which wide ones take two of
+      -- by the cells of each character, which wide ones take two of, and padded when one doesn't fit
       local part = ''
       for _, char in ipairs(vim.fn.split(line, '\\zs')) do
-        used = used + vim.api.nvim_strwidth(char)
-        if used > width - 1 then break end
-        part = part .. char
+        local char_width = vim.api.nvim_strwidth(char)
+        if used + char_width > width - 1 then break end
+        part, used = part .. char, used + char_width
       end
       table.insert(fitted, { part .. '…', chunk[2] })
+      table.insert(fitted, { (' '):rep(width - used - 1) })
       return fitted
     end
     table.insert(fitted, { line, chunk[2] })
@@ -74,7 +75,7 @@ end
 local function fallback(picker)
   local function format_item(item)
     local chunks, notes = picker.format(item)
-    return tools.join(chunks) .. (notes and '  ' .. tools.join(notes) or '')
+    return util.join(chunks) .. (notes and '  ' .. util.join(notes) or '')
   end
   vim.ui.select(picker.items, { prompt = picker.prompt, format_item = format_item }, function(item)
     if item ~= nil then picker.on_accept(item) end
@@ -84,11 +85,13 @@ end
 --- @param picker otto.Picker
 function M.select(picker)
   local ok, minibuffer = pcall(require, 'minibuffer')
-  if not ok or not require('minibuffer.internal.state').initialized then return fallback(picker) end
+  -- which has no public way to tell, so a change there falls back rather than breaks
+  local has_state, state = pcall(require, 'minibuffer.internal.state')
+  if not ok or not has_state or not state.initialized then return fallback(picker) end
 
   local texts = {} --- @type table<any, string>
   for _, item in ipairs(picker.items) do
-    texts[item] = picker.text and picker.text(item) or tools.join((picker.format(item)))
+    texts[item] = picker.text and picker.text(item) or util.join((picker.format(item)))
   end
   local previewed --- @type any
   local function preview(item)
@@ -109,7 +112,7 @@ function M.select(picker)
       local chunks, notes = picker.format(item)
       notes = notes or {}
       -- less the margins of the window
-      local width = vim.o.columns - 4 - vim.api.nvim_strwidth(tools.join(notes))
+      local width = vim.o.columns - 4 - vim.api.nvim_strwidth(util.join(notes))
       local line = vim.list_extend(fit(chunks, width), { { '  ' } })
       return vim.tbl_map(function(chunk) return { text = chunk[1], hl = chunk[2] } end, vim.list_extend(line, notes))
     end,
@@ -120,13 +123,11 @@ function M.select(picker)
   })
 end
 
---- Picks an open session, most recently used first but the visible ones and then the current one last. With
---- `with_saved`, the saved sessions of the current folder too, below the open ones
---- @param with_saved? boolean
-function M.sessions(with_saved)
-  -- here, since it loads this module
-  local views = require('otto.view').views
-
+--- Picks an open session, most recently used first but the visible ones and then the current one last, or with the
+--- saved sessions of the current folder too, below the open ones
+--- @param opts? { saved?: boolean }
+function M.sessions(opts)
+  local with_saved = opts ~= nil and opts.saved == true
   --- @class otto.SessionItem
   --- @field uri string
   --- @field provider string
@@ -147,14 +148,17 @@ function M.sessions(with_saved)
 
   local function items()
     local list, by_uri = {}, {} --- @type otto.SessionItem[], table<string, otto.SessionItem>
-    local infos = vim.tbl_filter(function(buf) return views[buf.bufnr] ~= nil end, vim.fn.getbufinfo({ bufloaded = 1 }))
+    local infos = vim.tbl_filter(
+      function(buf) return buffers.get(buf.bufnr) ~= nil end,
+      vim.fn.getbufinfo({ bufloaded = 1 })
+    )
     table.sort(infos, function(a, b)
       local rank_a, rank_b = rank(a.bufnr), rank(b.bufnr)
       if rank_a ~= rank_b then return rank_a < rank_b end
       return a.lastused > b.lastused
     end)
     for _, buf in ipairs(infos) do
-      local view = views[buf.bufnr]
+      local view = buffers.get(buf.bufnr)
       local session = view.session
       local item = { uri = buf.name, provider = session.provider.name, title = session.state.name, view = view }
       table.insert(list, item)
@@ -175,8 +179,8 @@ function M.sessions(with_saved)
   --- @param item otto.SessionItem
   local function format(item)
     local id = uri.id(item.uri)
-    -- the ids of Claude Code and Codex are UUIDs, which only need their end to be told apart
-    local short = item.provider == 'pi' and id or id:sub(-8)
+    -- like the ids of Claude Code and Codex, which only need their end to be told apart
+    local short = util.is_uuid(id) and id:sub(-8) or id
     local chunks = { { providers.get(item.provider).icon, 'OttoWinbarIcon' }, { item.title or id } }
     local notes = {}
     local state = item.view and item.view.session.state

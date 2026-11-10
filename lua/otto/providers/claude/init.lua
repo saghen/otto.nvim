@@ -13,5 +13,6 @@ function M.new_id() return util.uuid() end
 
 M.open = agent.open
 M.files = files.list
+M.parse = files.parse
 
 return M

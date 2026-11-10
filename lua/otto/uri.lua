@@ -2,6 +2,9 @@
 
 local M = {}
 
+--- @type otto.ProviderName[] Of otto.ProviderName, without loading the providers, which load most of otto
+M.providers = { 'pi', 'claude', 'codex' }
+
 --- @param provider string
 --- @param id string
 --- @return string

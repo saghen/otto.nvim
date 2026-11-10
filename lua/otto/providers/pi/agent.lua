@@ -5,8 +5,9 @@
 local decode = require('otto.providers.pi.decode')
 local event = require('otto.event')
 local files = require('otto.providers.pi.files')
+local jsonl = require('otto.jsonl')
 local log = require('otto.providers.log')
-local rpc = require('otto.rpc')
+local rpc = require('otto.providers.rpc')
 local util = require('otto.util')
 
 local M = {}
@@ -22,6 +23,8 @@ local M = {}
 local Agent = {}
 Agent.__index = Agent
 
+Agent.compact_instructions = true
+
 --- @param msg table A command, see docs/rpc-commands.md
 --- @return fun(id: integer): table
 local function command(msg)
@@ -34,7 +37,7 @@ function Agent:request(msg, callback) self.rpc:request(command(msg), callback) e
 
 --- @async
 --- @param msg table
---- @return table?
+--- @return table data
 function Agent:call(msg) return self.rpc:call(command(msg)) end
 
 --- Answers pi's extension dialogs, see docs/rpc-extension-ui.md
@@ -71,10 +74,17 @@ end
 --- @param status? 'working' | 'thinking' | 'compacting'
 function Agent:set_status(status) self.on_state({ status = status or false }) end
 
+--- Forgets the turn and the queue, once the process exited
+function Agent:reset()
+  self.working = false
+  self.log:reset()
+end
+
 --- @param msg table
 function Agent:on_message(msg)
   if msg.type == 'response' then
-    self.rpc:resolve(msg.id, not msg.success and msg.error or nil, msg.data)
+    -- an error without a message fails all the same
+    self.rpc:resolve(msg.id, not msg.success and (msg.error or 'request failed') or nil, msg.data)
   elseif msg.type == 'extension_ui_request' then
     self:on_dialog(msg)
   elseif msg.type == 'agent_start' then
@@ -101,9 +111,9 @@ function Agent:on_message(msg)
   elseif msg.type == 'queue_update' then
     self.on_state({ queue = event.queue(msg.steering, msg.followUp) })
   elseif msg.type == 'session_info_changed' then
-    self.log:patch_state({ name = msg.name })
+    self.on_state({ name = msg.name })
   elseif msg.type == 'thinking_level_changed' then
-    self.log:patch_state({ effort = msg.level })
+    self.on_state({ effort = msg.level })
   end
 end
 
@@ -112,18 +122,17 @@ end
 function Agent:replay()
   local file = files.session_file(self.id)
   if file == nil then return end
+  local handle = io.open(file)
+  if handle == nil then return end
   local entries = {}
   local by_id = {}
-  for line in io.lines(file) do
-    -- one bad line, like the last while it's written, doesn't lose the lines after it
-    local ok, entry = pcall(vim.json.decode, line, { luanil = { object = true, array = true } })
-    if not ok then
-      util.notify('pi: ' .. tostring(entry))
-    elseif entry.id ~= nil and entry.type ~= 'session' then
+  jsonl.each_line(handle, function(line)
+    local entry = jsonl.decode(line)
+    if entry.id ~= nil and entry.type ~= 'session' then
       table.insert(entries, entry)
       by_id[entry.id] = entry
     end
-  end
+  end, function(err) util.notify('pi: ' .. err) end)
   local branch = {}
   local entry = entries[#entries]
   while entry ~= nil do
@@ -132,30 +141,17 @@ function Agent:replay()
   end
 
   for _, current in ipairs(branch) do
-    local at = event.parse_iso(current.timestamp)
-    if current.type == 'message' then
-      decode.add(self.log, self.decoder, current.message, at)
-    elseif current.type == 'compaction' then
-      self.log:compaction({ summary = current.summary, before = current.tokensBefore }, at)
-    elseif current.type == 'session_info' then
-      self.log:patch_state({ name = current.name })
-    elseif current.type == 'model_change' then
-      self.log:patch_state({ model = current.modelId })
-    elseif current.type == 'thinking_level_change' then
-      self.log:patch_state({ effort = current.thinkingLevel })
-    end
+    -- one bad entry doesn't lose the entries after it
+    local ok, err = pcall(decode.add_entry, self.log, self.decoder, current)
+    if not ok then util.notify('pi: ' .. tostring(err)) end
   end
   self.log:end_turn()
 end
 
 --- @param text string
---- @param mode 'steer' | 'follow_up' While the agent works
---- @param on_error? fun(err: string)
-function Agent:prompt(text, mode, on_error)
-  local msg = { type = 'prompt', message = text, streamingBehavior = mode == 'follow_up' and 'followUp' or 'steer' }
-  self:request(msg, function(err)
-    if err ~= nil then (on_error or util.notify)(err) end
-  end)
+--- @param mode otto.PromptMode While the agent works
+function Agent:prompt(text, mode)
+  self:request({ type = 'prompt', message = text, streamingBehavior = mode == 'follow_up' and 'followUp' or 'steer' })
 end
 
 function Agent:abort() self:request({ type = 'abort' }) end
@@ -185,7 +181,7 @@ function Agent:compact(instructions) self:call({ type = 'compact', customInstruc
 --- @return string[] like "openrouter/deepseek/deepseek-v4.1-flash"
 function Agent:models()
   local models = self:call({ type = 'get_available_models' }).models
-  return vim.tbl_map(function(model) return model.provider .. '/' .. model.id end, models)
+  return vim.tbl_map(function(model) return decode.model_id(model.provider, model.id) end, models)
 end
 
 --- @async
@@ -193,7 +189,7 @@ end
 function Agent:set_model(model)
   local provider, id = model:match('^([^/]+)/(.+)$')
   local result = self:call({ type = 'set_model', provider = provider, modelId = id })
-  self.on_state({ model = id, context_window = result and result.contextWindow })
+  self.on_state({ model = model, context_window = result.contextWindow })
 end
 
 --- @async
@@ -210,7 +206,7 @@ function Agent:rename(name) self:call({ type = 'set_session_name', name = name }
 --- @return otto.AgentCommand[]
 function Agent:commands()
   return vim.tbl_map(
-    function(command) return { name = command.name, description = command.description } end,
+    function(cmd) return { name = cmd.name, description = cmd.description } end,
     self:call({ type = 'get_commands' }).commands
   )
 end
@@ -255,17 +251,14 @@ function M.open(id, opts)
   agent.rpc = rpc.start_agent(opts.config, vim.list_extend({ '--mode', 'rpc' }, args), {
     name = 'pi',
     on_message = function(msg) agent:on_message(msg) end,
-    on_exit = function()
-      agent.log:end_turn(true)
-      agent:set_status(nil)
-    end,
+    on_exit = function() agent:reset() end,
   })
   util.run_task(function()
     local state = agent:call({ type = 'get_state' })
     local model = state.model or {}
     opts.on_state({
       name = state.sessionName,
-      model = model.id,
+      model = model.id and decode.model_id(model.provider, model.id),
       effort = model.reasoning and state.thinkingLevel or nil,
       context_window = model.contextWindow,
     })

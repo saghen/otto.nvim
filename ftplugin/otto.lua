@@ -1,14 +1,20 @@
--- A session's buffer: its window options, and keeping the input and the transcript in place as they change. Its
--- keymaps come from the config once the session loads, without mapping over the keys of after/ftplugin/otto.lua
+-- A session's buffer: its window options, and keeping the input and the transcript in place as they change, and the
+-- <Plug> maps of otto's commands. Its keymaps come from the config once the session loads, without mapping over the
+-- keys of after/ftplugin/otto.lua
 
 if vim.b.did_ftplugin then return end
 vim.b.did_ftplugin = true
 
-local highlight = require('otto.highlight')
+local buffers = require('otto.buffers')
+local highlight = require('otto.render.highlight')
 local history = require('otto.ui.history')
+local input = require('otto.input')
+local keymaps = require('otto.ui.keymaps')
 local scroll = require('otto.ui.scroll')
-local util = require('otto.util')
-local views = require('otto.view').views
+local views = require('otto.view')
+
+-- once otto loads, before after/ftplugin/otto.lua maps them
+keymaps.define_plugs()
 
 local bufnr = vim.api.nvim_get_current_buf()
 local group = vim.api.nvim_create_augroup('otto.buffer', { clear = false })
@@ -16,7 +22,7 @@ local group = vim.api.nvim_create_augroup('otto.buffer', { clear = false })
 vim.b.undo_ftplugin = ("lua vim.api.nvim_clear_autocmds({ group = 'otto.buffer', buffer = %d })"):format(bufnr)
 
 --- @return otto.View?
-local function view() return views[bufnr] end
+local function view() return buffers.get(bufnr) end
 
 vim.api.nvim_create_autocmd('BufWinEnter', {
   group = group,
@@ -39,7 +45,7 @@ vim.api.nvim_create_autocmd('BufWinEnter', {
     -- once the window settles, so that the first output follows the prompt too
     local win = vim.api.nvim_get_current_win()
     vim.schedule(function()
-      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then scroll.watch(win) end
+      if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then scroll.remember(win) end
     end)
   end,
 })
@@ -58,7 +64,7 @@ vim.api.nvim_create_autocmd('InsertEnter', {
   callback = function()
     if view() == nil then return end
     -- insert mode opens the fold under the cursor before the prompt buffer moves the cursor to the input
-    local input_lnum = util.input_row(bufnr) + 1
+    local input_lnum = input.row(bufnr) + 1
     if vim.fn.line('.') >= input_lnum then return end
     vim.api.nvim_win_set_cursor(0, { input_lnum, 0 })
     vim.v.char = 'moved' -- keeps the cursor there, see :help InsertEnter
@@ -68,9 +74,8 @@ vim.api.nvim_create_autocmd('BufUnload', {
   group = group,
   buffer = bufnr,
   callback = function()
-    if views[bufnr] == nil then return end
+    if view() == nil then return end
     history.save_drafts({ bufnr })
-    views[bufnr]:close()
-    views[bufnr] = nil
+    views.unload(bufnr)
   end,
 })

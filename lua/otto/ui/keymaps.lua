@@ -1,55 +1,40 @@
 -- Keymaps of a session's buffer, which run the commands of `commands.lua` through <Plug>(otto-<command>) maps, like
 -- <Plug>(otto-submit), which after/ftplugin/otto.lua can map too
 
+local buffers = require('otto.buffers')
 local commands = require('otto.ui.commands')
 local config = require('otto.config')
+local util = require('otto.util')
 
 local M = {}
 
---- @param name string Of the command
---- @return string
-local function plug(name) return ('<Plug>(otto-%s)'):format(name) end
+local defined = false
 
---- Maps <Plug>(otto-<command>) of every command, which runs it in the current buffer's session
+--- Maps <Plug>(otto-<command>) of every command, which runs it in the current buffer's session, once
 function M.define_plugs()
+  if defined then return end
+  defined = true
   for _, command in ipairs(commands.builtin) do
-    vim.keymap.set(command.modes or 'n', plug(command.name), function()
-      local view = require('otto.view').views[vim.api.nvim_get_current_buf()]
+    vim.keymap.set(command.modes or 'n', commands.plug(command.name), function()
+      local view = buffers.current()
       if view == nil then return '' end
       return commands.run(view, command.name)
-    end, { desc = 'Otto: ' .. command.description, expr = command.expr })
+    end, { desc = 'Otto: ' .. command.description, expr = command.keys ~= nil })
   end
 end
 
 --- @param lhs string
---- @param than? string
---- @return boolean Whether it's the better key to show, the one of fewer keys, like <M-x> over <localleader>x
-local function shorter(lhs, than)
-  if than == nil then return true end
-  local keys, than_keys = #lhs:gsub('<[^<>]+>', '_'), #than:gsub('<[^<>]+>', '_')
-  return keys < than_keys or keys == than_keys and #lhs < #than
-end
-
---- @param bufnr integer
---- @return table<string, string> The key of each command that has one in the buffer, for the palette
-function M.keys_by_command(bufnr)
-  local keys = {}
-  for _, mode in ipairs({ 'n', 'i' }) do
-    local maps = vim.api.nvim_buf_get_keymap(bufnr, mode)
-    local local_lhs = {}
-    for _, map in ipairs(maps) do
-      local_lhs[map.lhs] = true
-    end
-    -- unless the buffer's own hide them
-    for _, map in ipairs(vim.api.nvim_get_keymap(mode)) do
-      if not local_lhs[map.lhs] then table.insert(maps, map) end
-    end
-    for _, map in ipairs(maps) do
-      local name = map.rhs and map.rhs:match('^<Plug>%(otto%-(.+)%)$')
-      if name ~= nil and shorter(map.lhs, keys[name]) then keys[name] = map.lhs end
-    end
+--- @param mode string
+--- @param name string
+--- @return otto.Command?
+--- @return string? error of a command that doesn't exist, or has no keymap in the mode
+local function command_of(lhs, mode, name)
+  local command = commands.get(name)
+  if command == nil then return nil, ('keymaps[%s]: unknown command %s'):format(lhs, vim.inspect(name)) end
+  if not vim.list_contains(command.modes or { 'n' }, mode) then
+    return nil, ('keymaps[%s]: %s has no keymap in mode %s'):format(lhs, name, mode)
   end
-  return keys
+  return command
 end
 
 --- Maps the configured keys, but not over the buffer's own, like those of after/ftplugin/otto.lua
@@ -67,10 +52,11 @@ function M.attach(view)
     local set = {}
     for lhs, value in pairs(keymaps or {}) do
       for mode, name in pairs(commands.by_mode(value)) do
-        if vim.fn.maparg(lhs, mode, false, true).buffer ~= 1 then
-          local desc = 'Otto: ' .. commands.get(name).description
-          vim.keymap.set(mode, lhs, plug(name), { buf = bufnr, desc = desc })
-          table.insert(set, { mode = mode, lhs = lhs, rhs = plug(name) })
+        local command, err = command_of(lhs, mode, name)
+        if err then util.notify(err) end
+        if command and vim.fn.maparg(lhs, mode, false, true).buffer ~= 1 then
+          vim.keymap.set(mode, lhs, commands.plug(name), { buf = bufnr, desc = 'Otto: ' .. command.description })
+          table.insert(set, { mode = mode, lhs = lhs, rhs = commands.plug(name) })
         end
       end
     end

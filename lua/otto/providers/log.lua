@@ -29,8 +29,12 @@ function M.new(emit, on_state)
   )
 end
 
+--- @class otto.ToolResult : otto.ToolResultEvent Of `Log:tool_result`, which adds its type and time
+--- @field type? 'tool_result'
+--- @field at? integer
+
 --- Adds an event of the turn, starting the turn when none is running
---- @param fields table
+--- @param fields table Of an `otto.Event`, which this adds its time to
 --- @param at? integer Now by default
 function Log:push(fields, at)
   fields.at = at or event.now()
@@ -61,6 +65,12 @@ function Log:end_turn(aborted, at)
   })
 end
 
+--- Ends the turn aborted, and what the agent was doing and its queue, once its process is gone
+function Log:reset()
+  self:end_turn(true)
+  self.on_state({ status = false, queue = {} })
+end
+
 --- The turn ends aborted, like when the user interrupts the agent
 function Log:mark_aborted() self.aborted = true end
 
@@ -87,14 +97,14 @@ end
 
 --- @param id string
 --- @param tool string
---- @param args table
+--- @param args otto.ToolArgs | table Of otto's tools, or the agent's own
 --- @param at? integer
 function Log:tool_call(id, tool, args, at)
   self:push({ type = 'tool_call', id = id, tool = tool, args = args }, at)
   self.answered = false
 end
 
---- @param result table The fields of `otto.Event` for tool results
+--- @param result otto.ToolResult
 --- @param at? integer
 function Log:tool_result(result, at)
   result.type = 'tool_result'
@@ -118,7 +128,8 @@ function Log:compaction(compaction, at)
   self.emit(compaction)
 end
 
---- What the session runs with, which the history has too
+--- What the session runs with, which the history has too. For decoders, which only hold the log, while agents patch the
+--- state themselves
 --- @param patch otto.StatePatch
 function Log:patch_state(patch) self.on_state(patch) end
 

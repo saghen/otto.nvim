@@ -1,7 +1,7 @@
 -- Keeps the windows of a session's buffer scrolled to the same lines of the input, as output arrives above it and
 -- folds change
 
-local util = require('otto.util')
+local input = require('otto.input')
 
 local M = {}
 
@@ -12,13 +12,13 @@ local M = {}
 
 --- Remembers where the window shows the input
 --- @param win integer
-function M.watch(win)
+function M.remember(win)
   local bufnr = vim.api.nvim_win_get_buf(win)
   vim.w[win].otto_scroll = vim.api.nvim_win_call(win, function()
     local bottom = vim.fn.line('w$')
-    local input = util.input_row(bufnr) + 1
-    if bottom < input then return nil end
-    local offset = bottom < vim.api.nvim_buf_line_count(bufnr) and bottom - input or nil
+    local input_lnum = input.row(bufnr) + 1
+    if bottom < input_lnum then return nil end
+    local offset = bottom < vim.api.nvim_buf_line_count(bufnr) and bottom - input_lnum or nil
     return { height = vim.api.nvim_win_get_height(win), offset = offset }
   end)
 end
@@ -31,11 +31,11 @@ local function restore(win)
   local bufnr = vim.api.nvim_win_get_buf(win)
   vim.api.nvim_win_call(win, function()
     local last = vim.api.nvim_buf_line_count(bufnr)
-    local input = util.input_row(bufnr) + 1
+    local input_lnum = input.row(bufnr) + 1
     local cursor = vim.api.nvim_win_get_cursor(win)
     local scrolloff = vim.api.nvim_get_option_value('scrolloff', { win = win, scope = 'local' })
     vim.wo[win].scrolloff = 0 -- so that the line goes to the very bottom
-    vim.api.nvim_win_set_cursor(win, { math.min(input + (scroll.offset or last), last), 0 })
+    vim.api.nvim_win_set_cursor(win, { math.min(input_lnum + (scroll.offset or last), last), 0 })
     vim.cmd('normal! zb')
     vim.api.nvim_set_option_value('scrolloff', scrolloff, { win = win, scope = 'local' })
     -- in the transcript, the cursor moves with the text like with <C-e>
@@ -50,7 +50,7 @@ end
 function M.follow(bufnr)
   for _, win in ipairs(vim.fn.win_findbuf(bufnr)) do
     restore(win)
-    M.watch(win)
+    M.remember(win)
   end
 end
 
@@ -60,7 +60,7 @@ end
 function M.scrolled(win)
   local scroll = vim.w[win].otto_scroll
   if scroll ~= nil and scroll.height ~= vim.api.nvim_win_get_height(win) then restore(win) end
-  M.watch(win)
+  M.remember(win)
 end
 
 return M

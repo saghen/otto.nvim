@@ -66,11 +66,20 @@ function Ready:set(err, value)
 end
 
 --- @async
---- @return any value, raising the error
+--- @return any value Raising the error
 function Ready:await()
   if not self.done then vim.async.await(1, function(resume) table.insert(self.waiting, resume) end) end
   if self.err ~= nil then error(self.err, 0) end
   return self.value
+end
+
+--- @alias otto.Chunks { [1]: string, [2]: string?, filetype?: string }[] Text and highlight group pairs, like virtual
+--- text, or text that highlights as its filetype
+
+--- @param chunks otto.Chunks
+--- @return string
+function M.join(chunks)
+  return vim.iter(chunks):map(function(chunk) return chunk[1] end):join('')
 end
 
 --- @param levels string[] Of the model, or the usual ones when it has none
@@ -81,33 +90,9 @@ function M.next_effort(levels, current)
   return levels[(vim.fn.index(levels, current) + 1) % #levels + 1]
 end
 
---- @param bufnr integer Of a session
---- @return integer row of the first line of the input, 0-indexed
-function M.input_row(bufnr) return vim.api.nvim_buf_get_mark(bufnr, ':')[1] - 1 end
-
---- Replaces what the input holds
---- @param bufnr integer
---- @param text string
-function M.set_input(bufnr, text)
-  vim.api.nvim_buf_set_lines(bufnr, M.input_row(bufnr), -1, false, vim.split(text, '\n'))
-end
-
 --- @param text string
 --- @return string without the whitespace at its end, unlike `vim.trim`, which would shift the lines of file contents
 function M.trim_end(text) return text:match('^(.*%S)') or '' end
-
---- Renames the buffer, without the unlisted buffer of its old name that renaming leaves, which <C-^> would open
---- @param bufnr integer
---- @param name string
-function M.rename_buffer(bufnr, name)
-  local old = vim.api.nvim_buf_get_name(bufnr)
-  vim.api.nvim_buf_set_name(bufnr, name)
-  for _, other in ipairs(vim.api.nvim_list_bufs()) do
-    if other ~= bufnr and not vim.api.nvim_buf_is_loaded(other) and vim.api.nvim_buf_get_name(other) == old then
-      vim.api.nvim_buf_delete(other, { force = true })
-    end
-  end
-end
 
 --- @param path string
 --- @return string relative to the current folder, or the home folder
@@ -131,6 +116,10 @@ function M.format_age(seconds)
   end
   return 'now'
 end
+
+--- @param id string
+--- @return boolean whether it's a UUID, like the ids of Claude Code's sessions and Codex's threads
+function M.is_uuid(id) return id:match('^%x+%-%x+%-%x+%-%x+%-%x+$') ~= nil end
 
 --- @return string random version 4 UUID
 function M.uuid()

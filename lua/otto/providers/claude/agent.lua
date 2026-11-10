@@ -3,8 +3,9 @@
 local decode = require('otto.providers.claude.decode')
 local event = require('otto.event')
 local files = require('otto.providers.claude.files')
+local jsonl = require('otto.jsonl')
 local log = require('otto.providers.log')
-local rpc = require('otto.rpc')
+local rpc = require('otto.providers.rpc')
 local util = require('otto.util')
 
 local M = {}
@@ -14,6 +15,19 @@ local forks = {}
 
 -- of the default model, until Claude Code reports the context window of the one that answers
 local default_context_window = 1000000
+
+--- Of `--permission-mode`
+--- @alias otto.ClaudePermissionMode
+---| 'default'
+---| 'manual' # default
+---| 'acceptEdits'
+---| 'plan'
+---| 'auto'
+---| 'dontAsk'
+---| 'bypassPermissions'
+
+--- @class otto.ClaudeAgentOpts : otto.AgentOpts
+--- @field config otto.ClaudeConfig
 
 --- @class otto.ClaudeAgent : otto.Agent
 --- @field id string
@@ -28,18 +42,22 @@ local default_context_window = 1000000
 --- @field effort string like "high", which Claude Code only writes to the session file
 --- @field working boolean
 --- @field thinking boolean
---- @field unread { text: string, uuid: string }[] Prompts that Claude Code hasn't read yet, which it doesn't report
+--- @field unread { text: string, uuid: string, follow_up: boolean }[] Prompts that Claude Code hasn't read yet, which
+--- it doesn't report
 --- @field started_prompts table<string, true> Prompts that rendered when Claude Code started a turn with them, until it
 --- echoes them
 --- @field foreground table<string, true> Subagents that the turn waits for, by task, which end with their tool's result
 --- @field notifications table[] Ends of subagents and commands in the background that Claude Code hasn't read yet
+--- @field permissions table<string, otto.Request> Asked, by request id, until they're answered
 local Agent = {}
 Agent.__index = Agent
+
+Agent.compact_instructions = true
 
 --- Adds the ends of subagents and commands that Claude Code read
 function Agent:flush_notifications()
   for _, notification in ipairs(self.notifications) do
-    decode.task_end(self.log, self.decoder, notification, notification.at)
+    decode.add_task_end(self.log, self.decoder, notification, notification.at)
   end
   self.notifications = {}
 end
@@ -75,16 +93,27 @@ function Agent:request(request, callback) self.rpc:request(frame(request), callb
 
 --- @async
 --- @param request table
---- @return table?
+--- @return table response
 function Agent:call(request) return self.rpc:call(frame(request)) end
 
 --- @async
 --- @return table response to `initialize`
 function Agent:await_init() return self.init:await() end
 
+--- @param follow_up boolean
+--- @return { text: string, uuid: string, follow_up: boolean }[] unread Of those that steer, or the follow-ups
+function Agent:unread_of(follow_up)
+  return vim.tbl_filter(function(queued) return queued.follow_up == follow_up end, self.unread)
+end
+
+--- @return { text: string, uuid: string, follow_up: boolean }[] unread Steering first, like the queue shows them
+function Agent:queued() return vim.list_extend(self:unread_of(false), self:unread_of(true)) end
+
 function Agent:report_queue()
-  local texts = vim.tbl_map(function(queued) return queued.text end, self.unread)
-  self.on_state({ queue = event.queue(texts) })
+  local function texts(follow_up)
+    return vim.tbl_map(function(queued) return queued.text end, self:unread_of(follow_up))
+  end
+  self.on_state({ queue = event.queue(texts(false), texts(true)) })
 end
 
 --- @param working boolean
@@ -96,7 +125,7 @@ end
 
 --- Claude Code echoes prompts once it reads them, see `--replay-user-messages`
 --- @param text string
-function Agent:echoed(text)
+function Agent:on_echo(text)
   local index = vim.iter(ipairs(self.unread)):find(function(_, queued) return queued.text == text end)
   if index == nil then return end
   table.remove(self.unread, index)
@@ -114,8 +143,7 @@ function Agent:on_command_started(uuid)
   local text = table.remove(self.unread, index).text
   self:report_queue()
   self.started_prompts[uuid] = true
-  table.insert(self.decoder.prompts, { uuid = uuid, parent = self.decoder.last, text = vim.trim(text) })
-  self.log:user(vim.trim(text))
+  decode.add_started_prompt(self.log, self.decoder, uuid, text)
   -- like a follow-up, which starts after the turn that it waited for
   if not self.working then self:set_working(true) end
 end
@@ -131,11 +159,16 @@ function Agent:on_permission(msg)
     request.display_name or request.tool_name,
     request.description or ''
   )
-  self.on_request({
+  --- @type otto.Request
+  local pending
+  pending = {
     kind = 'select',
     prompt = prompt,
     items = items,
     respond = function(choice)
+      -- unless it was answered elsewhere, or the turn was interrupted
+      if pending.cancelled then return end
+      self.permissions[msg.request_id] = nil
       local response = { behavior = 'deny', message = 'The user denied this' }
       if choice == 'Allow' or choice == 'Always allow' then
         response = {
@@ -149,16 +182,24 @@ function Agent:on_permission(msg)
         response = { subtype = 'success', request_id = msg.request_id, response = response },
       })
     end,
-  })
+  }
+  self.permissions[msg.request_id] = pending
+  self.on_request(pending)
 end
 
 --- @param msg table
 function Agent:on_message(msg)
   if msg.type == 'control_response' then
     local response = msg.response
-    self.rpc:resolve(response.request_id, response.subtype == 'error' and response.error or nil, response.response)
+    -- an error without a message fails all the same
+    local err = response.subtype == 'error' and (response.error or 'request failed') or nil
+    self.rpc:resolve(response.request_id, err, response.response)
   elseif msg.type == 'control_request' and msg.request.subtype == 'can_use_tool' then
     self:on_permission(msg)
+  elseif msg.type == 'control_cancel_request' then
+    local pending = self.permissions[msg.request_id]
+    if pending then pending.cancelled = true end
+    self.permissions[msg.request_id] = nil
   elseif msg.type == 'control_request' then
     -- which Claude Code would wait for
     local message = msg.request.subtype .. ' is not supported by otto'
@@ -175,7 +216,7 @@ function Agent:on_message(msg)
       decode.add(self.log, self.decoder, msg)
       self.on_state({ status = self.working and 'working' })
     end
-    if msg.subtype == 'session_title_changed' then self.log:patch_state({ name = msg.title }) end
+    if msg.subtype == 'session_title_changed' then self.on_state({ name = msg.title }) end
     if msg.subtype == 'background_tasks_changed' or vim.startswith(msg.subtype or '', 'task_') then
       self:on_task(msg)
     end
@@ -185,7 +226,7 @@ function Agent:on_message(msg)
   elseif msg.type == 'user' and self.started_prompts[msg.uuid] then
     self.started_prompts[msg.uuid] = nil
   elseif msg.type == 'assistant' or msg.type == 'user' then
-    if msg.type == 'user' and type(msg.message.content) == 'string' then self:echoed(msg.message.content) end
+    if msg.type == 'user' and type(msg.message.content) == 'string' then self:on_echo(msg.message.content) end
     decode.add(self.log, self.decoder, msg)
   elseif msg.type == 'stream_event' and msg.parent_tool_use_id == nil then
     local stream = msg.event
@@ -200,7 +241,8 @@ function Agent:on_message(msg)
     local usage = (msg.modelUsage or {})[self.model] or select(2, next(msg.modelUsage or {}))
     if usage then self.on_state({ context_window = usage.contextWindow }) end
     self.log:end_turn(msg.subtype == 'error_during_execution')
-    self:set_working(false)
+    -- until Claude Code starts on the prompts that it didn't read, like follow-ups
+    self:set_working(#self.unread > 0)
     -- which only the background ones outlive
     self.foreground = {}
   end
@@ -213,43 +255,57 @@ function Agent:replay()
   -- a fork, which Claude Code only saves once it's prompted, shows the session it forked up to where it did
   local fork = forks[self.id]
   if vim.uv.fs_stat(file) == nil and fork and fork.at then file = files.session_file(fork.session) end
-  if vim.uv.fs_stat(file) == nil then return end
-  for line in io.lines(file) do
-    local entry
-    -- like the stream, one bad line, like the last while it's written, doesn't lose the lines after it
-    local ok, err = pcall(function()
-      entry = vim.json.decode(line, { luanil = { object = true, array = true } })
-      decode.add(self.log, self.decoder, entry)
-    end)
-    if not ok then util.notify('claude: ' .. tostring(err)) end
-    if file ~= self.file and entry and entry.uuid == fork.at then break end
-  end
+  local handle = io.open(file)
+  if handle == nil then return end
+  -- up to and including the entry that the fork resumes at, even if it fails
+  local at_fork = false
+  jsonl.each_line(handle, function(line)
+    if at_fork then return false end
+    local entry = jsonl.decode(line)
+    at_fork = file ~= self.file and entry.uuid == fork.at
+    decode.add(self.log, self.decoder, entry)
+  end, function(err) util.notify('claude: ' .. err) end)
   self.log:end_turn()
 end
 
+--- Claude Code reads prompts that steer between the steps of its turn, and those of priority "later" once it ends
 --- @param text string
-function Agent:prompt(text)
+--- @param mode otto.PromptMode While the agent works
+function Agent:prompt(text, mode)
   local uuid = util.uuid() -- which cancels it while it's queued
-  self.rpc:send({ type = 'user', uuid = uuid, message = { role = 'user', content = text } })
+  local follow_up = self.working and mode == 'follow_up'
+  local priority = follow_up and 'later' or nil
+  local message = { type = 'user', uuid = uuid, priority = priority, message = { role = 'user', content = text } }
+  -- to a process that's gone, which would never read it
+  if not self.rpc:send(message) then return end
   if not self.working then self:set_working(true) end
   -- commands render as their output
   if vim.startswith(text, '/') then return end
-  table.insert(self.unread, { text = text, uuid = uuid })
+  table.insert(self.unread, { text = text, uuid = uuid, follow_up = follow_up })
   self:report_queue()
 end
 
 function Agent:abort() self:request({ subtype = 'interrupt' }) end
+
+--- Runs a command of Claude Code, like /compact, which it reads like a prompt
+--- @async
+--- @param text string
+function Agent:run_command(text)
+  if not self.rpc:running() then error('claude is not running', 0) end
+  self:prompt(text, 'steer')
+end
 
 --- @async
 --- @return string[]
 --- @param newest_only? boolean
 function Agent:take_queue(newest_only)
   local texts = {}
-  -- newest first, while it's waited on
-  for i = #self.unread, 1, -1 do
-    local queued = self.unread[i]
+  local queue = self:queued()
+  -- the last one first, while it's waited on
+  for i = #queue, 1, -1 do
+    local queued = queue[i]
     -- unless Claude Code read it already, which then answers it
-    if queued and self:call({ subtype = 'cancel_async_message', message_uuid = queued.uuid }).cancelled then
+    if self:call({ subtype = 'cancel_async_message', message_uuid = queued.uuid }).cancelled then
       table.insert(texts, 1, queued.text)
       self.unread = vim.tbl_filter(function(other) return other ~= queued end, self.unread)
       if newest_only then break end
@@ -261,7 +317,7 @@ end
 
 --- @async
 --- @param instructions? string
-function Agent:compact(instructions) self:prompt(vim.trim('/compact ' .. (instructions or ''))) end
+function Agent:compact(instructions) self:run_command(vim.trim('/compact ' .. (instructions or ''))) end
 
 --- @async
 --- @return string[]
@@ -295,13 +351,13 @@ end
 --- name, and reports it as `session_title_changed`
 --- @async
 --- @param name string
-function Agent:rename(name) self:prompt('/rename ' .. name) end
+function Agent:rename(name) self:run_command('/rename ' .. name) end
 
 --- @async
 --- @return otto.AgentCommand[]
 function Agent:commands()
   return vim.tbl_map(
-    function(command) return { name = command.name, description = command.description, arg_hint = command.argumentHint } end,
+    function(cmd) return { name = cmd.name, description = cmd.description, arg_hint = cmd.argumentHint } end,
     self:await_init().commands
   )
 end
@@ -327,9 +383,23 @@ function Agent:fork(id)
 end
 
 function Agent:close() self.rpc:close() end
+
+--- Forgets the turn and the queue, once the process exited
+function Agent:reset()
+  -- without the ends that Claude Code didn't read, which its file doesn't have
+  self.notifications, self.foreground, self.started_prompts, self.unread = {}, {}, {}, {}
+  self.working, self.thinking = false, false
+  -- which a process that's gone can't read
+  for _, pending in pairs(self.permissions) do
+    pending.cancelled = true
+  end
+  self.permissions = {}
+  self.log:reset()
+end
+
 --- Starts Claude Code for the session, which it creates when it doesn't exist
 --- @param id string UUID
---- @param opts otto.AgentOpts
+--- @param opts otto.ClaudeAgentOpts
 --- @return otto.ClaudeAgent
 function M.open(id, opts)
   --- @type otto.ClaudeAgent
@@ -349,6 +419,7 @@ function M.open(id, opts)
     started_prompts = {},
     foreground = {},
     notifications = {},
+    permissions = {},
   }, Agent)
 
   local exists = vim.uv.fs_stat(agent.file) ~= nil
@@ -376,15 +447,7 @@ function M.open(id, opts)
   agent.rpc = rpc.start_agent(opts.config, args, {
     name = 'claude',
     on_message = function(msg) agent:on_message(msg) end,
-    on_exit = function()
-      -- without the ends that Claude Code didn't read, which its file doesn't have
-      agent.notifications = {}
-      agent.unread = {}
-      agent:report_queue()
-      agent.log:end_turn(true)
-      agent:set_working(false)
-      agent.foreground = {}
-    end,
+    on_exit = function() agent:reset() end,
     -- inside Claude Code, CLAUDECODE would make it refuse to start
     env = { CLAUDECODE = '' },
   })
