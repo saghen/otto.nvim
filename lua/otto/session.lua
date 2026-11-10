@@ -18,6 +18,7 @@ local util = require('otto.util')
 --- @field status_since? integer When the agent started working, in milliseconds of the event loop
 --- @field queue otto.Queued[] Prompts that the agent hasn't read yet
 --- @field commands otto.AgentCommand[]
+--- @field remote? string Link of the session while Remote Control is on
 
 --- @class otto.Listener What a view, or anything else, is told of a session
 --- @field on_log? fun(event: otto.Event) Once it's in the log
@@ -172,6 +173,7 @@ function Session:on_state(patch)
     if state.status == nil and patch.status then state.status_since = vim.uv.now() end
     state.status = patch.status or nil
   end
+  if patch.remote ~= nil then state.remote = patch.remote or nil end
   local now = state.status
   for _, key in ipairs(keys) do
     if patch[key] ~= nil then state[key] = patch[key] end

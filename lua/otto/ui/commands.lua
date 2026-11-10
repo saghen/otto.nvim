@@ -137,6 +137,25 @@ M.builtin = {
     run = function(view) prompts.pick(view, { rewind = true }) end,
   },
   {
+    name = 'remote_control',
+    description = 'Continue the session from claude.ai or the Claude app, copying its link',
+    available = function(view) return view.session.agent.remote_control ~= nil end,
+    run = function(view)
+      local agent = view.session.agent
+      local link = view.session.state.remote
+      if link == nil then
+        link = agent:remote_control(true)
+      else
+        local choice = util.select({ 'Copy link', 'Turn off' }, { prompt = 'Remote Control: ' })
+        if choice == 'Turn off' then agent:remote_control(false) end
+        if choice ~= 'Copy link' then return end
+      end
+      if link == nil then return util.notify(view.session.provider.name .. " didn't return a link") end
+      vim.fn.setreg(vim.fn.has('clipboard') == 1 and '+' or '"', link)
+      util.notify('copied ' .. link, vim.log.levels.INFO)
+    end,
+  },
+  {
     name = 'reload',
     description = 'Restart the agent, reloading its extensions, skills, prompt templates and context files',
     run = function(view) view:restart() end,

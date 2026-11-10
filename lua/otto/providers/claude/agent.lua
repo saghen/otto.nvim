@@ -166,7 +166,7 @@ function Agent:on_permission(msg)
     prompt = prompt,
     items = items,
     respond = function(choice)
-      -- unless it was answered elsewhere, or the turn was interrupted
+      -- unless it was answered elsewhere, like over Remote Control, or the turn was interrupted
       if pending.cancelled then return end
       self.permissions[msg.request_id] = nil
       local response = { behavior = 'deny', message = 'The user denied this' }
@@ -217,6 +217,11 @@ function Agent:on_message(msg)
       self.on_state({ status = self.working and 'working' })
     end
     if msg.subtype == 'session_title_changed' then self.on_state({ name = msg.title }) end
+    -- of Remote Control, which reconnects unless it failed for good
+    if msg.subtype == 'bridge_state' and (msg.failure_kind == 'terminal' or msg.state == 'policy_disabled') then
+      util.notify('claude: Remote Control stopped: ' .. (msg.detail or msg.state))
+      self.on_state({ remote = false })
+    end
     if msg.subtype == 'background_tasks_changed' or vim.startswith(msg.subtype or '', 'task_') then
       self:on_task(msg)
     end
@@ -230,6 +235,8 @@ function Agent:on_message(msg)
     decode.add(self.log, self.decoder, msg)
   elseif msg.type == 'stream_event' and msg.parent_tool_use_id == nil then
     local stream = msg.event
+    -- of a turn that otto didn't start, like with a prompt over Remote Control
+    if stream.type == 'message_start' and not self.working then self:set_working(true) end
     if stream.type == 'content_block_start' and stream.content_block.type == 'thinking' then
       self.thinking = true
       self.on_state({ status = 'thinking' })
@@ -382,6 +389,17 @@ function Agent:fork(id)
   return { id = fork, text = prompt.text }
 end
 
+--- With a link to the session on claude.ai, which the Claude app opens too
+--- @async
+--- @param enabled boolean
+--- @return string? link Once it's on
+function Agent:remote_control(enabled)
+  local response = self:call({ subtype = 'remote_control', enabled = enabled }) or {}
+  local link = enabled and response.session_url or nil
+  self.on_state({ remote = link or false })
+  return link
+end
+
 function Agent:close() self.rpc:close() end
 
 --- Forgets the turn and the queue, once the process exited
@@ -395,6 +413,8 @@ function Agent:reset()
   end
   self.permissions = {}
   self.log:reset()
+  -- which ends with the process
+  self.on_state({ remote = false })
 end
 
 --- Starts Claude Code for the session, which it creates when it doesn't exist

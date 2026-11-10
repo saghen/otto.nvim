@@ -94,6 +94,7 @@ local M = {}
 --- @field status? otto.Status | false False once the agent stopped
 --- @field queue? otto.Queued[] Prompts that the agent hasn't read yet, including the one that was just sent
 --- @field commands? otto.AgentCommand[] The agent's own, like pi's skills
+--- @field remote? string | false Link of the session while Remote Control is on, false once it's off
 
 --- @class otto.Queued
 --- @field text string

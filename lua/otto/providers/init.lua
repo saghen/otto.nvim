@@ -37,6 +37,8 @@
 --- @field fork_points? async fun(self: otto.Agent): { id: string, text: string }[] Prompts to fork from
 --- @field fork? async fun(self: otto.Agent, id: string): { id: string, text: string }? The new session's id, and the
 --- prompt to edit
+--- @field remote_control? async fun(self: otto.Agent, enabled: boolean): string? Turns Remote Control on or off,
+--- returning the session's link once it's on
 --- @field close fun(self: otto.Agent)
 
 --- @class otto.AgentCommand The agent's own, like pi's extensions, prompt templates and skills

@@ -1,4 +1,5 @@
--- The winbar of a session: the agent's icon, the session's name, model, thinking level, context usage and cost
+-- The winbar of a session: the agent's icon, the session's name, model, thinking level, context usage, cost and
+-- whether Remote Control is on
 
 local M = {}
 
@@ -19,6 +20,7 @@ function M.render(view)
     { 'effort', state.effort },
     { 'context', context and ('%d%%'):format(context) },
     { 'cost', (state.cost or 0) >= 0.005 and ('$%.2f'):format(state.cost) or nil },
+    { 'remote', state.remote and 'on' },
   }
   local bar = '  ' .. item(view.session.provider.icon, 'OttoWinbarIcon') .. item(state.name or state.id, 'Normal')
   for _, field in ipairs(fields) do
