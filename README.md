@@ -39,9 +39,18 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<M-n>` | Newer prompt history |
 | `<M-r>` | Prompt history picker |
 | `<M-x>` | Commands |
+| `<C-p>`, `\m` | Model |
+| `<S-Tab>`, `\e` | Cycle thinking level |
+| `\c` | Compact |
+| `\n` | New session in this buffer |
+| `\s` | Switch session |
+| `\r` | Rename the session |
+| `\R` | Rewind to an earlier prompt |
+| `\l` | Restart the agent |
+| `\h`, `\H` | Prompt history picker, of this folder or every folder |
 | `\p` | Jump to a prompt |
 | `\q` | Edits of the session to quickfix |
-| `\c` | What the tool under the cursor changed, or else the session, as a diff, when tracked |
+| `\d` | What the tool under the cursor changed, or else the session, as a diff, when tracked |
 
 ## Configuration
 

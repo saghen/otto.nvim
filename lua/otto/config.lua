@@ -71,9 +71,19 @@ local keymaps = {
   ['@'] = 'at',
   ['<C-p>'] = 'model',
   ['<S-Tab>'] = 'effort',
-  ['<localleader>q'] = 'edits',
-  ['<localleader>c'] = 'changes',
+  ['<localleader>m'] = 'model',
+  ['<localleader>e'] = 'effort',
+  ['<localleader>c'] = 'compact',
+  ['<localleader>n'] = 'clear',
+  ['<localleader>s'] = 'resume',
+  ['<localleader>r'] = 'rename',
+  ['<localleader>R'] = 'rewind',
+  ['<localleader>l'] = 'reload',
+  ['<localleader>h'] = 'history',
+  ['<localleader>H'] = 'history_all',
   ['<localleader>p'] = 'prompts',
+  ['<localleader>q'] = 'edits',
+  ['<localleader>d'] = 'changes',
 }
 
 --- Spells keys one way, like <C-S> for <c-s>, so that the user's replace the defaults. Leaders stay, since they may be
