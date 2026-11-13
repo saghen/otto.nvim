@@ -130,9 +130,10 @@ M.builtin = {
     end,
   },
   {
-    name = 'clear',
+    name = 'new',
     description = 'Start a new session in this buffer, keeping this one saved',
     run = function(view)
+      if util.select({ 'Yes', 'No' }, { prompt = 'Start a new session? ' }) ~= 'Yes' then return end
       local provider = view.session.provider
       view:restart(uri.id(uri.unique(provider.name, provider.new_id())))
     end,

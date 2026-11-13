@@ -176,7 +176,10 @@ t.describe('restart', function()
   t.check('its agent', agents[#agents].id, 'three')
   t.check('its transcript', t.lines(bufnr), { 'from three', '', '', '' })
 
-  require('otto.ui.commands').run(switched, 'clear')
+  local commands = require('otto.ui.commands')
+  t.selecting(2, function() commands.run(switched, 'new') end)
+  t.check('not without confirming', agents[#agents].id, 'three')
+  t.selecting(1, function() commands.run(switched, 'new') end)
   vim.wait(100, function() return agents[#agents].id == 'cleared' end)
   t.check('cleared to a new session', { vim.api.nvim_buf_get_name(bufnr), agents[#agents].id }, {
     'fake://cleared',
