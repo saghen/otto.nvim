@@ -114,6 +114,16 @@ local function tag(text, name)
   return text:match('<' .. escaped .. '>(.-)</' .. escaped .. '>')
 end
 
+--- Skills that the user ran, like /loop, which start with <command-message>, unlike Claude Code's own commands
+--- @param text string
+--- @return string? like "/loop 5m check the build"
+function M.command_prompt(text)
+  if not vim.startswith(text, '<command-message>') then return nil end
+  local name = tag(text, 'command-name')
+  if name == nil then return nil end
+  return vim.trim(name .. ' ' .. (tag(text, 'command-args') or ''))
+end
+
 --- The end of a subagent or a command, as Claude Code adds it to the conversation, like the stream's
 --- `task_notification`
 --- @param text string
@@ -260,7 +270,8 @@ function M.add(log, decoder, entry)
   end
   local queued = type(attachment.prompt) == 'string' and attachment.prompt or nil
   if attachment.type == 'queued_command' and attachment.commandMode == 'prompt' then
-    if queued and not M.is_tagged(queued) then return add_prompt(log, decoder, entry.uuid, parent, queued, at) end
+    local prompt = queued and (M.command_prompt(queued) or not M.is_tagged(queued) and queued)
+    if prompt then return add_prompt(log, decoder, entry.uuid, parent, prompt, at) end
     -- like messages from other sessions, which the agent reads like prompts
     return log:interject()
   end
@@ -312,6 +323,7 @@ function M.add(log, decoder, entry)
   end
   -- like /compact from Claude Code's own UI, which renders as the compaction
   if text == '/compact' or vim.startswith(text, '/compact ') then return end
+  text = M.command_prompt(text) or text
   if M.is_tagged(text) then return log:interject() end
   add_prompt(log, decoder, entry.uuid, parent, text, at)
 end

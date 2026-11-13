@@ -34,7 +34,8 @@ function M.parse(file, modified)
       saved.message_count = saved.message_count + 1
       local content = first_prompt == nil and line:find('"type":"user"', 1, true) and jsonl.decode(line).message.content
       -- tool results and the output of local commands aren't prompts
-      if type(content) == 'string' and not decode.is_tagged(content) then first_prompt = content end
+      if type(content) == 'string' then first_prompt = decode.command_prompt(content) or content end
+      if first_prompt and decode.is_tagged(first_prompt) then first_prompt = nil end
     end
   end
   jsonl.each_line(handle, read)

@@ -195,6 +195,26 @@ t.describe('titles', function()
   t.check('custom wins', patches, { { name = 'Fix tests' }, { name = 'Mine' } })
 end)
 
+t.describe('skills', function()
+  local events = decode_all({
+    user(
+      'l',
+      0,
+      '<command-message>loop</command-message>\n<command-name>/loop</command-name>\n<command-args>5m check</command-args>'
+    ),
+    user('m', 1, { { type = 'text', text = '# /loop' } }, { isMeta = true }),
+    user(
+      'r',
+      2,
+      '<command-name>/rename</command-name>\n<command-message>rename</command-message>\n<command-args>x</command-args>'
+    ),
+  })
+  local prompts = vim.tbl_filter(function(e) return e.type == 'user' end, events)
+  t.check("render as prompts, unlike Claude Code's own commands", prompts, {
+    { type = 'user', text = '/loop 5m check', at = at(0) },
+  })
+end)
+
 t.describe('compaction', function()
   local events, patches = decode_all({
     {
