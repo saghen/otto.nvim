@@ -25,6 +25,9 @@ local tools = {
     args.background = input.run_in_background
     return 'agent', args
   end,
+  SendMessage = function(input)
+    return 'message', { description = input.summary, to = input.to, message = input.message }
+  end,
 }
 tools.Task = tools.Agent
 

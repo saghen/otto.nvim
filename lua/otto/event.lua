@@ -64,13 +64,15 @@ local M = {}
 --- @field limit? integer read: count of lines
 --- @field content? string write
 --- @field command? string bash
---- @field description? string bash, when the agent describes its commands
+--- @field description? string bash, when the agent describes its commands. message: its summary
 --- @field pattern? string grep, find
 --- @field query? string web_search
 --- @field urls? string[] fetch
 --- @field prompt? string agent
 --- @field type? string agent: its kind, like "general-purpose"
 --- @field background? boolean agent, bash: whether it ends as a second result
+--- @field to? string message: who it's for, like another session
+--- @field message? string message
 
 --- @class otto.ToolCall
 --- @field tool string

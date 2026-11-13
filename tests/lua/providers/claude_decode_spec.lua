@@ -152,6 +152,10 @@ t.describe('tools', function()
     'agent',
     { description = 'd', prompt = 'p', type = 'Explore' },
   })
+  t.check('SendMessage', call('SendMessage', { to = 'research', summary = 's', message = 'm' }), {
+    'message',
+    { description = 's', to = 'research', message = 'm' },
+  })
   t.check('background Bash', call('Bash', { command = 'srv', run_in_background = true }), {
     'bash',
     { command = 'srv', background = true },

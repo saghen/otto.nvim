@@ -43,6 +43,7 @@ local summaries = {
   web_search = 'ran %d web search',
   fetch = 'read %d web page',
   agent = 'ran %d subagent',
+  message = 'sent %d message',
 }
 
 --- @param tools string[] of the group
@@ -76,6 +77,7 @@ local required = {
   web_search = { query = 'string' },
   fetch = { urls = 'table' },
   agent = { description = 'string' },
+  message = { to = 'string', message = 'string' },
 }
 local optional = { pattern = 'string', description = 'string', offset = 'number', limit = 'number' }
 
@@ -127,6 +129,10 @@ function M.header(tool, args)
     local header = { { 'agent', 'OttoToolName' }, { ' ' .. first_line(args.description), 'OttoToolArg' } }
     if type(args.type) == 'string' then table.insert(header, { '  ' .. args.type, 'OttoToolDetail' }) end
     return header
+  end
+  if tool == 'message' then
+    local summary = { ' ' .. first_line(args.description or args.message), 'OttoToolArg' }
+    return { { 'message', 'OttoToolName' }, summary, { '  to ' .. args.to, 'OttoToolDetail' } }
   end
   if tool == 'web_search' then
     return { { 'web', 'OttoToolName' }, { ' ' .. first_line(args.query), 'OttoToolArg' } }
@@ -304,6 +310,8 @@ end
 --- @param output otto.Section
 --- @return otto.Section[]
 function M.result_sections(call, output)
+  -- what was sent, rather than the json that says it was
+  if call.tool == 'message' then return { M.section(vim.split(call.args.message, '\n'), 'markdown') } end
   local sections = #output.lines > 0 and { output } or {}
   local command = call.tool == 'bash' and vim.split(vim.trim(call.args.command), '\n')
   if command and (#command > 1 or call.args.description ~= nil) then

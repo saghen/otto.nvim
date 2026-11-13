@@ -34,6 +34,11 @@ t.describe('header', function()
   t.check('bash lines', header('bash', { command = 'cd a\nmake\nls' }), '$ cd a  +2 lines')
   t.check('bash description', header('bash', { command = 'make', description = 'Build\nit' }), '$ Build')
   t.check('agent', header('agent', { description = 'Review', type = 'general' }), 'agent Review  general')
+  t.check(
+    'message',
+    header('message', { description = 'Ask\nit', to = 'research', message = 'm' }),
+    'message Ask  to research'
+  )
   t.check('web', header('web_search', { query = 'neovim' }), 'web neovim')
   t.check('fetch', header('fetch', { urls = { 'https://a', 'https://b', 'https://c' } }), 'fetch https://a +2')
   t.check('grep', header('grep', { pattern = 'foo', path = 'lua' }), 'grep foo  in lua')
@@ -146,4 +151,7 @@ t.describe('results', function()
     { 'make', 'test' },
     { 'ok' },
   })
+  local message = { tool = 'message', args = { to = 'r', message = 'hi\nthere' } }
+  local sent = tools.result_sections(message, tools.section({ '{"success":true}' }))
+  t.check('what a message sent', { sent[1].lines, sent[1].filetype, #sent }, { { 'hi', 'there' }, 'markdown', 1 })
 end)
