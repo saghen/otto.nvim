@@ -82,13 +82,14 @@ function M.join(chunks)
   return vim.iter(chunks):map(function(chunk) return chunk[1] end):join('')
 end
 
---- @param levels string[] Of the model, or the usual ones when it has none
+--- @param levels string[] Of the model
+--- @return string[] the usual ones when the model has none
+function M.efforts(levels) return #levels > 0 and levels or { 'low', 'medium', 'high' } end
+
+--- @param levels string[]
 --- @param current? string
 --- @return string the level after the current one
-function M.next_effort(levels, current)
-  if #levels == 0 then levels = { 'low', 'medium', 'high' } end
-  return levels[(vim.fn.index(levels, current) + 1) % #levels + 1]
-end
+function M.next_effort(levels, current) return levels[(vim.fn.index(levels, current) + 1) % #levels + 1] end
 
 --- @param text string
 --- @return string without the whitespace at its end, unlike `vim.trim`, which would shift the lines of file contents

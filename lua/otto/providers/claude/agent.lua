@@ -361,13 +361,22 @@ function Agent:set_model(model)
 end
 
 --- @async
-function Agent:cycle_effort()
+--- @return string[]
+function Agent:efforts()
   local model = vim.iter(self:await_init().models):find(function(option) return option.resolvedModel == self.model end)
-  local level = util.next_effort(model and model.supportedEffortLevels or {}, self.effort)
+  return util.efforts(model and model.supportedEffortLevels or {})
+end
+
+--- @async
+--- @param level string
+function Agent:set_effort(level)
   self:call({ subtype = 'apply_flag_settings', settings = { effortLevel = level } })
   self.effort = level
   self.on_state({ effort = level })
 end
+
+--- @async
+function Agent:cycle_effort() self:set_effort(util.next_effort(self:efforts(), self.effort)) end
 
 --- With Claude Code's /rename, which it runs after the turn that's running, without the model. Claude Code keeps the
 --- name, and reports it as `session_title_changed`

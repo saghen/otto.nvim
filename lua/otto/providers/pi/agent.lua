@@ -229,6 +229,17 @@ function Agent:set_model(model)
 end
 
 --- @async
+--- @return string[]
+function Agent:efforts() return self:call({ type = 'get_available_thinking_levels' }).levels end
+
+--- @async
+--- @param level string
+function Agent:set_effort(level)
+  self:call({ type = 'set_thinking_level', level = level })
+  self.on_state({ effort = level })
+end
+
+--- @async
 function Agent:cycle_effort()
   -- pi reports the level as `thinking_level_changed`
   self:call({ type = 'cycle_thinking_level' })

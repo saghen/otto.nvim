@@ -329,13 +329,22 @@ function Agent:set_model(model)
 end
 
 --- @async
-function Agent:cycle_effort()
+--- @return string[]
+function Agent:efforts()
   local model = vim.iter(self.models_ready:await()):find(function(option) return option.id == self.model end)
   local options = model and model.supportedReasoningEfforts or {}
-  local levels = vim.tbl_map(function(option) return option.reasoningEffort end, options)
-  self.effort = util.next_effort(levels, self.effort)
-  self.on_state({ effort = self.effort })
+  return util.efforts(vim.tbl_map(function(option) return option.reasoningEffort end, options))
 end
+
+--- @async
+--- @param level string
+function Agent:set_effort(level)
+  self.effort = level
+  self.on_state({ effort = level })
+end
+
+--- @async
+function Agent:cycle_effort() self:set_effort(util.next_effort(self:efforts(), self.effort)) end
 
 --- @async
 --- @param name string

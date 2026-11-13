@@ -40,7 +40,8 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<M-r>` | Prompt history picker |
 | `<M-x>` | Commands |
 | `<C-p>`, `\m` | Model |
-| `<S-Tab>`, `\e` | Cycle thinking level |
+| `<S-Tab>` | Cycle thinking level |
+| `\e` | Thinking level picker |
 | `\c` | Compact |
 | `\n` | New session in this buffer |
 | `\s` | Switch session |

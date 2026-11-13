@@ -8,7 +8,7 @@ t.describe('next_effort', function()
   t.check('next', util.next_effort({ 'low', 'high' }, 'low'), 'high')
   t.check('wraps', util.next_effort({ 'low', 'high' }, 'high'), 'low')
   t.check('unknown starts over', util.next_effort({ 'low', 'high' }, 'max'), 'low')
-  t.check('none has the usual', util.next_effort({}, 'medium'), 'high')
+  t.check('none has the usual', util.efforts({}), { 'low', 'medium', 'high' })
   t.check('nothing yet', util.next_effort({ 'low', 'high' }, nil), 'low')
 end)
 

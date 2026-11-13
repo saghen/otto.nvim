@@ -52,6 +52,9 @@ t.describe('models', function()
   agent.rpc.held['model/list'](nil, { data = { { id = 'gpt-5', supportedReasoningEfforts = efforts } } })
   task:wait(1000)
   t.check('once it arrives', models, { 'gpt-5' })
+  local levels
+  t.run(function() levels = agent:efforts() end)
+  t.check('efforts of the model', levels, { 'low', 'high' })
   t.run(function() agent:cycle_effort() end)
   t.check('cycles through those of the model', patches[#patches], { effort = 'high' })
 

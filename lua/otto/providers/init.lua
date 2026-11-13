@@ -31,6 +31,8 @@
 --- @field compact_instructions boolean Whether `compact` takes instructions
 --- @field models async fun(self: otto.Agent): string[]
 --- @field set_model async fun(self: otto.Agent, model: string)
+--- @field efforts async fun(self: otto.Agent): string[] Thinking levels of the current model
+--- @field set_effort async fun(self: otto.Agent, level: string)
 --- @field cycle_effort async fun(self: otto.Agent)
 --- @field rename async fun(self: otto.Agent, name: string) Claude Code's runs after the turn that's running
 --- @field commands async fun(self: otto.Agent): otto.AgentCommand[]

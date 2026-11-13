@@ -90,7 +90,23 @@ M.builtin = {
   },
   {
     name = 'effort',
-    description = 'Cycle thinking level',
+    description = 'Pick the thinking level',
+    run = function(view)
+      local agent = view.session.agent
+      local function current(level) return level == view.session.state.effort end
+      pick.select({
+        prompt = 'Effort: ',
+        items = agent:efforts(),
+        format = function(level) return { { current(level) and '● ' or '  ', 'OttoStatus' }, { level } } end,
+        on_accept = function(level)
+          util.run_task(function() agent:set_effort(level) end)
+        end,
+      })
+    end,
+  },
+  {
+    name = 'cycle_effort',
+    description = 'Cycle the thinking level',
     run = function(view) view.session.agent:cycle_effort() end, -- the winbar shows the level
   },
   {
