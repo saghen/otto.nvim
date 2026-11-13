@@ -34,7 +34,6 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | --- | --- |
 | `<C-s>`, `<CR>` (normal) | Submit |
 | `<M-CR>` | Submit as follow-up |
-| `<C-c>` | Stop |
 | `<M-p>` | Older prompt history or edit queued history |
 | `<M-n>` | Newer prompt history |
 | `<M-r>` | Prompt history picker |
@@ -43,6 +42,7 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<S-Tab>` | Cycle thinking level |
 | `\e` | Thinking level picker |
 | `\c` | Compact |
+| `\C` | Cancel |
 | `\n` | New session in this buffer |
 | `\s` | Switch session |
 | `\r` | Rename the session |

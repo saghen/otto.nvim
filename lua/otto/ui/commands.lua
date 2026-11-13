@@ -201,8 +201,8 @@ M.builtin = {
     run = function(view) changes.open_at_cursor(view) end,
   },
   {
-    name = 'abort',
-    description = 'Stop the agent, taking back the queued prompts',
+    name = 'cancel',
+    description = 'Cancel the agent, taking back the queued prompts',
     run = function(view)
       -- first, since the agent would go on with them
       take_back(view, view.session.agent:take_queue())

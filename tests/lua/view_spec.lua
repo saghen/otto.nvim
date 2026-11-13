@@ -141,7 +141,7 @@ t.describe('commands', function()
 
   agent.queue = { 'first', 'second' }
   input.set(bufnr, 'typed')
-  commands.run(view, 'abort')
+  commands.run(view, 'cancel')
   vim.wait(100, function() return agent.aborted end)
   t.check('aborts', agent.aborted, true)
   t.check('taking back the queue above the input', vim.fn.prompt_getinput(bufnr), 'first\nsecond\ntyped')
