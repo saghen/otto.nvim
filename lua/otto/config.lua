@@ -66,7 +66,6 @@ local keymaps = {
   ['<M-p>'] = 'history_older',
   ['<M-n>'] = 'history_newer',
   ['<M-r>'] = 'history',
-  ['<C-p>'] = 'model',
   ['<S-Tab>'] = 'cycle_effort',
   ['<localleader><localleader>'] = 'commands',
   ['<localleader>m'] = 'model',

@@ -39,7 +39,7 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<M-n>` | Newer prompt history |
 | `<M-r>` | Prompt history picker |
 | `\\` | Commands |
-| `<C-p>`, `\m` | Model |
+| `\m` | Model |
 | `<S-Tab>` | Cycle thinking level |
 | `\e` | Thinking level picker |
 | `\c` | Compact |
