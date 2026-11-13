@@ -71,6 +71,8 @@ t.describe('commands', function()
   t.check('turned off', commands.by_mode(false), {})
   local modes = commands.get('submit').modes or { 'n' }
   t.check('by mode of a name', vim.tbl_count(commands.by_mode('submit')), #modes)
+  t.check('not in insert mode of the local leader', commands.by_mode('history', '<LocalLeader>h'), { n = 'history' })
+  t.check('unless mapped there', commands.by_mode({ i = 'history' }, '<LocalLeader>h'), { i = 'history' })
 end)
 
 if not pcall(require, 'blink.lib.config') then return t.skip('the config needs blink.lib, in BLINK_LIB') end

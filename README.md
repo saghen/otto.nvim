@@ -38,7 +38,7 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `<M-p>` | Older prompt history or edit queued history |
 | `<M-n>` | Newer prompt history |
 | `<M-r>` | Prompt history picker |
-| `<M-x>` | Commands |
+| `\\` | Commands |
 | `<C-p>`, `\m` | Model |
 | `<S-Tab>` | Cycle thinking level |
 | `\e` | Thinking level picker |
@@ -48,6 +48,7 @@ Pickers use [minibuffer.nvim](https://github.com/saghen/minibuffer.nvim) when it
 | `\r` | Rename the session |
 | `\R` | Rewind to an earlier prompt |
 | `\l` | Restart the agent |
+| `\x` | Remote Control (Claude), copying its link |
 | `\h`, `\H` | Prompt history picker, of this folder or every folder |
 | `\p` | Jump to a prompt |
 | `\q` | Edits of the session to quickfix |

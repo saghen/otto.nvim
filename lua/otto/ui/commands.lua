@@ -1,6 +1,6 @@
--- Otto's commands, which its keymaps and the palette (<M-x>) run. The agents' own commands, like pi's extensions,
--- prompt templates and skills, are prompts like "/review", which the palette lists as "pi-review" and starts in the
--- input, and which the input completes after a / at its start, see `lsp.lua`
+-- Otto's commands, which its keymaps and the palette (<localleader><localleader>) run. The agents' own commands, like
+-- pi's extensions, prompt templates and skills, are prompts like "/review", which the palette lists as "pi-review" and
+-- starts in the input, and which the input completes after a / at its start, see `lsp.lua`
 
 local changes = require('otto.ui.changes')
 local history = require('otto.ui.history')
@@ -70,7 +70,7 @@ end
 M.builtin = {
   {
     name = 'model',
-    description = 'Select a model',
+    description = 'Model',
     run = function(view)
       local models = view.session.agent:models()
       local function current(id) return id == view.session.state.model end
@@ -111,7 +111,7 @@ M.builtin = {
   },
   {
     name = 'compact',
-    description = 'Compact the context, optionally with custom instructions',
+    description = 'Compact the context',
     run = function(view)
       local agent = view.session.agent
       if not agent.compact_instructions then return agent:compact() end
@@ -306,13 +306,16 @@ end
 function M.plug(name) return ('<Plug>(otto-%s)'):format(name) end
 
 --- @param value otto.Keymap
---- @return table<string, string> Command by mode, without those turned off, of commands that may not exist
-function M.by_mode(value)
+--- @param lhs? string
+--- @return table<string, string> Command by mode, without those turned off, of commands that may not exist. Not in
+--- insert mode for keys of the local leader, which would hold up typing it, unless mapped there by mode
+function M.by_mode(value, lhs)
   if type(value) == 'string' then
     local command = M.get(value)
+    local localleader = lhs ~= nil and lhs:lower():find('<localleader>', 1, true) ~= nil
     local by_mode = {}
     for _, mode in ipairs(command and command.modes or { 'n' }) do
-      by_mode[mode] = value
+      if not (localleader and mode == 'i') then by_mode[mode] = value end
     end
     return by_mode
   end

@@ -51,11 +51,16 @@ function M.attach(view)
     end
     local set = {}
     for lhs, value in pairs(keymaps or {}) do
-      for mode, name in pairs(commands.by_mode(value)) do
+      for mode, name in pairs(commands.by_mode(value, lhs)) do
         local command, err = command_of(lhs, mode, name)
         if err then util.notify(err) end
         if command and vim.fn.maparg(lhs, mode, false, true).buffer ~= 1 then
-          vim.keymap.set(mode, lhs, commands.plug(name), { buf = bufnr, desc = 'Otto: ' .. command.description })
+          vim.keymap.set(
+            mode,
+            lhs,
+            commands.plug(name),
+            { buf = bufnr, desc = command.name:gsub('_', ' '):gsub('^%l', string.upper) }
+          )
           table.insert(set, { mode = mode, lhs = lhs, rhs = commands.plug(name) })
         end
       end
