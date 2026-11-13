@@ -126,28 +126,3 @@ t.describe('fallback', function()
   package.loaded['minibuffer'] = nil
   package.loaded['minibuffer.internal.state'] = nil
 end)
-
-t.describe('files', function()
-  local cwd = vim.fn.getcwd()
-  local dir = vim.fn.tempname()
-  vim.fn.mkdir(dir .. '/sub', 'p')
-  vim.fn.writefile({}, dir .. '/b.lua')
-  vim.fn.writefile({}, dir .. '/sub/a.lua')
-  vim.fn.system({ 'git', 'init', '-q', dir })
-  vim.fn.chdir(dir)
-  local opts
-  t.run(function()
-    opts = minibuffer(function()
-      pick.files(function() end)
-    end)
-  end)
-  vim.fn.chdir(cwd)
-  vim.fn.delete(dir, 'rf')
-  t.check('of the folder, sorted', opts.fetch_fn and (function()
-    local items
-    opts.fetch_fn(nil, function(list) items = list end)
-    return items
-  end)(), { 'b.lua', 'sub/a.lua' })
-  local chunks = opts.format_fn('sub/a.lua')
-  t.check('the folder dimmed', { chunks[1].text, chunks[1].hl, chunks[2].text }, { 'sub/', 'Comment', 'a.lua' })
-end)

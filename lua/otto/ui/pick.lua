@@ -234,34 +234,4 @@ function M.sessions(opts)
   M.select({ prompt = 'Session: ', items = items(), format = format, on_accept = open })
 end
 
---- @async
---- @return string[] The current folder's files that aren't ignored, relative to it
-local function list_files()
-  local cmd = vim.fn.executable('rg') == 1 and { 'rg', '--files' }
-    or { 'git', 'ls-files', '--cached', '--others', '--exclude-standard' }
-  local out = util.await(function(callback)
-    vim.system(cmd, { text = true }, vim.schedule_wrap(function(result) callback(nil, result) end))
-  end)
-  if out.code ~= 0 then error(cmd[1] .. ': ' .. vim.trim(out.stderr or ''), 0) end
-  local files = vim.split(out.stdout, '\n', { trimempty = true })
-  table.sort(files)
-  return files
-end
-
---- Picks a file of the current folder, fuzzily
---- @async
---- @param on_accept fun(path: string)
-function M.files(on_accept)
-  M.select({
-    prompt = 'File: ',
-    items = list_files(),
-    fuzzy = true,
-    format = function(path)
-      local name = vim.fs.basename(path)
-      return { { path:sub(1, #path - #name), 'Comment' }, { name } }
-    end,
-    on_accept = on_accept,
-  })
-end
-
 return M

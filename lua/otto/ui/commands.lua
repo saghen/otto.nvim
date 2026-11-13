@@ -1,6 +1,6 @@
 -- Otto's commands, which its keymaps and the palette (<M-x>) run. The agents' own commands, like pi's extensions,
 -- prompt templates and skills, are prompts like "/review", which the palette lists as "pi-review" and starts in the
--- input
+-- input, and which the input completes after a / at its start, see `lsp.lua`
 
 local changes = require('otto.ui.changes')
 local history = require('otto.ui.history')
@@ -269,31 +269,6 @@ M.builtin = {
     modes = { 'n', 'i' },
     palette = false,
     run = function(view) M.palette(view) end,
-  },
-  {
-    -- the agent's commands start with it, which the palette picks from
-    name = 'slash',
-    description = 'Commands at the start of the input, otherwise /',
-    modes = { 'i' },
-    palette = false,
-    -- not keys, which would see the cursor before the keys typed ahead of it are inserted
-    run = function(view)
-      local lnum, col = unpack(vim.api.nvim_win_get_cursor(0))
-      if lnum - 1 == input.row(view.bufnr) and col == 0 then return M.palette(view) end
-      vim.api.nvim_feedkeys('/', 'in', false)
-    end,
-  },
-  {
-    name = 'at',
-    description = 'Mention a file at the start of a word, otherwise @',
-    modes = { 'i' },
-    palette = false,
-    run = function(view)
-      local lnum, col = unpack(vim.api.nvim_win_get_cursor(0))
-      local before = vim.api.nvim_get_current_line():sub(1, col)
-      if before ~= '' and not before:match('%s$') then return vim.api.nvim_feedkeys('@', 'in', false) end
-      pick.files(function(path) insert(view, lnum, col, '@' .. path .. ' ') end)
-    end,
   },
 }
 

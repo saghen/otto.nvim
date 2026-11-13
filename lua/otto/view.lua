@@ -6,6 +6,7 @@ local footer = require('otto.ui.footer')
 local history = require('otto.ui.history')
 local keymaps = require('otto.ui.keymaps')
 local layout = require('otto.render.layout')
+local lsp = require('otto.ui.lsp')
 local providers = require('otto.providers')
 local sessions = require('otto.session')
 local transcript = require('otto.render.transcript')
@@ -137,6 +138,7 @@ function M.load(bufnr)
 
   vim.fn.prompt_setcallback(bufnr, function(text) view:submit(text) end)
   keymaps.attach(view)
+  lsp.attach(view)
 end
 
 --- Restarts the agent for the session's buffer, and renders the session again
