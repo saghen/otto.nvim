@@ -71,7 +71,7 @@ local tags = {
 function M.is_tagged(text) return tags[text:match('^<([%w-]+)[%s>]')] == true end
 
 --- @class otto.ClaudeDecoder What the decoder keeps between entries
---- @field compaction { before?: integer, after?: integer } The last one
+--- @field compaction { before?: integer, after?: integer, pending?: true } The last one, pending until its summary
 --- @field model? string
 --- @field titled? boolean Whether the session has a custom title, which AI titles don't replace
 --- @field calls table<string, { tool: string, args: table }> By id, for the subagents and commands that they start
@@ -250,7 +250,7 @@ function M.add(log, decoder, entry)
     local metadata = entry.compactMetadata or entry.compact_metadata or {}
     local before = metadata.preTokens or metadata.pre_tokens
     local after = metadata.postTokens or metadata.post_tokens
-    decoder.compaction = { before = before, after = after }
+    decoder.compaction = { before = before, after = after, pending = true }
     if after ~= nil then log:patch_state({ context_tokens = after }) end
     return
   end
@@ -305,7 +305,10 @@ function M.add(log, decoder, entry)
   if entry.type ~= 'user' then return end
 
   local text = type(content) == 'string' and content or nil
-  if entry.isCompactSummary then
+  -- the stream only marks the summary as synthetic, right after the boundary
+  local summary = entry.isCompactSummary or (decoder.compaction.pending and entry.isSynthetic)
+  decoder.compaction.pending = nil
+  if summary then
     return log:compaction(
       { summary = event.text_of(content), before = decoder.compaction.before, after = decoder.compaction.after },
       at

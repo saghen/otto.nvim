@@ -240,6 +240,24 @@ t.describe('compaction', function()
   local stream =
     decode_all({ { type = 'system', subtype = 'compact_boundary', compact_metadata = { pre_tokens = 9 } } })
   t.check('stream', stream, {})
+
+  local live = decode_all({
+    { type = 'system', subtype = 'compact_boundary', compact_metadata = { pre_tokens = 9, post_tokens = 2 } },
+    {
+      type = 'user',
+      uuid = 's',
+      message = { role = 'user', content = 'Summary.' },
+      isSynthetic = true,
+      timestamp = ts(1),
+    },
+    { type = 'user', uuid = 'm', message = { role = 'user', content = 'go' }, isSynthetic = true },
+  })
+  t.check(
+    'summary of the stream',
+    live[1],
+    { type = 'compaction', summary = 'Summary.', before = 9, after = 2, at = at(1) }
+  )
+  t.check('only the first after the boundary', live[2].type, 'user')
 end)
 
 t.describe('errors and aborts', function()
